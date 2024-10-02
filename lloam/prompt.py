@@ -1,8 +1,9 @@
-from completions import Completion
 import textwrap
 import inspect
 import re
 from enum import Enum
+
+from completions import Completion
 
 
 def prompt(f):
@@ -108,26 +109,21 @@ def split_prompt(text):
 def parse_prompt(prompt_src: str, args):
     prompt_vars = {**args}
     prompt_holes = {}
-    graph = {}
+    cells = {}
 
     i = 0
     for segment_type, content in split_prompt(prompt_src):
         if segment_type == PromptSegment.BODY:
-            graph[i] = {
-                "value": content,
-                "depends_on": i - 1
-            }
+            cells[i] = content
 
         elif segment_type == PromptSegment.VARIABLE:
-            prompt_vars[content] = {
-                "value": args[content],
-                "depends_on": i - 1
-            }
+            if content in prompt_vars:
+                cells[i] = prompt_vars[content]
+            elif content in prompt_holes:
+                cells[i] = prompt_holes[content]
+            else:
+                raise ValueError(f"Variable {content} used before definition")
 
-            graph[i] = {
-                "value": prompt_vars[content],
-                "depends_on": i - 1
-            }
 
         elif segment_type == PromptSegment.HOLE:
             if content in prompt_vars:
@@ -135,19 +131,68 @@ def parse_prompt(prompt_src: str, args):
             elif content in prompt_holes:
                 raise ValueError(f"Hole {content} already defined")
             else:
-                prompt_holes[content] = None
+                prompt_holes[content] = i
 
-            graph[i] = {
-                "value": prompt_holes[content],
-                "depends_on": i - 1
-            }
+
+            cells[i] = prompt_holes[content],
 
         else:
             raise ValueError("Unknown segment type")
 
         i += 1
 
-    return graph
+    return cells, prompt_vars, prompt_holes
+
+
+class Prompt:
+    def __init__(self, f, args):
+        self.prompt_src = preprocess(f)
+
+        self.cells,
+        self.prompt_vars,
+        self.prompt_holes = parse_prompt(self.prompt_src, args)
+
+
+        self.completions = {}
+        self.active_hole = list(self.prompt_holes.keys())
+        prev_hole = list(self.prompt_holes.keys())[0]
+
+        for hole_name, loc in list(self.prompt_holes.items())[1:]:
+            self.completions[hole_name] = {
+                "completion": Completion()
+            }
+
+            self.completions[prev_hole]["next"] = hole_name
+            prev_hole = hole_name
+
+        self.prompt_state = ""
+        self.pc = 0
+
+        def completion_callback(completion):
+            while self.pc < self.prompt_holes[self.active_hole]:
+                self.prompt_state += self.cells[self.pc]
+                self.pc += 1
+
+            result = completion.result()
+
+            self.prompt_state += result
+            self.active_hole = self.completions[self.active_hole]["next"]
+            self.pc += 1
+
+
+
+
+
+    def __getattr__(self, name):
+        if name in self.prompt_vars:
+            return self.prompt_vars[name]
+        elif name in self.prompt_holes:
+            return self.completions[name]
+        elif name == "prompt":
+            return self.prompt_src
+        else:
+            raise AttributeError(f"Prompt has no attribute {name}")
+
 
 
 if __name__ == "__main__":
