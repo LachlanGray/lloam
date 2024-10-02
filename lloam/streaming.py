@@ -23,11 +23,12 @@ async def stream_chat_completion(
         stop=stop,
         stream=True
     )
-    
-    async for chunk in stream:
-        if chunk.choices[0].delta.content is not None:
-            yield chunk.choices[0].delta.content
-
+    try:
+        async for chunk in stream:
+            if chunk.choices[0].delta.content is not None:
+                yield chunk.choices[0].delta.content
+    finally:
+        await stream.close()
 
 
 async def parallel_stream_processing(questions: list[str]):

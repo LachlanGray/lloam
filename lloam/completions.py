@@ -13,10 +13,18 @@ class CompletionStatus(Enum):
 
 
 class Completion(Future):
-    def __init__(self, prompt):
+    def __init__(self, prompt, stop=None):
+        """
+        :param prompt: A string, openai-style chat list, or list of strings
+        :param stop: A stopping string, or list of stopping strings
+        """
         super().__init__()
         self.prompt = prompt
         self.status = CompletionStatus.PENDING
+
+        self.stops = set()
+        if stop:
+            self.add_stop(stop)
 
         self._async_gen_func = stream_chat_completion  # The async generator function
         self.chunks = []  # List to accumulate string chunks
@@ -32,8 +40,19 @@ class Completion(Future):
         self._thread.start()
         self.status = CompletionStatus.RUNNING
 
+    def add_stop(self, stop):
+        if isinstance(stop, str):
+            self.stops.add(stop)
+        else:
+            self.stops.update(set(stop))
+
     def __str__(self):
-        return "".join(self.chunks)
+        if self.status == CompletionStatus.PENDING:
+            return "[     ]"
+        elif self.status == CompletionStatus.RUNNING:
+            return "[ ... ]"
+        elif self.status == CompletionStatus.FINISHED:
+            return "".join(self.chunks)
 
     def _start_loop(self):
         asyncio.set_event_loop(self._loop)
@@ -43,11 +62,35 @@ class Completion(Future):
             self._loop.close()
 
     async def _run_generator(self):
+        gen = self._async_gen_func(self.prompt)
         try:
-            async for chunk in self._async_gen_func(self.prompt):
+            async for chunk in gen:
                 self.chunks.append(chunk)
-            self.set_result(self.chunks)  # Set the final result
+
+                prompt = "".join(self.chunks)
+                for stop in self.stops:
+                    if stop in prompt:
+
+                        # get number of trailing characters
+                        trailing = len(prompt) - prompt.rfind(stop)
+
+                        for _ in range(trailing):
+                            self.chunks[-1] = self.chunks[-1][:-1]
+                            if self.chunks[-1] == "":
+                                self.chunks.pop(-1)
+
+                        self.status = CompletionStatus.FINISHED
+                        break
+
+
+                if self.status == CompletionStatus.FINISHED:
+                    await gen.aclose()
+                    break
+
+
+            self.set_result(self.chunks)
             self.status = CompletionStatus.FINISHED
+
         except Exception as e:
             self.set_exception(e)
             self.status = CompletionStatus.ERROR
@@ -70,12 +113,7 @@ class Completion(Future):
 if __name__ == "__main__":
 
     test = "who am I speaking to"
-    completion = Completion(test)
-    
-    while not completion.finished:
-        print(completion.chunks)
+    completion = Completion(test, stop="AI")
+    completion.start()
 
-    result = completion.result()
-    print(result)
-
-
+    print(completion.result())

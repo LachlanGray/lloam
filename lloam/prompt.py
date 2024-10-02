@@ -5,6 +5,7 @@ from enum import Enum
 
 from completions import Completion, CompletionStatus
 
+PROBABLE_STOPS = set(["\n", ".", "?", "!", ":", ";", "(", ")", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
 
 def prompt(f):
     def wrapper(*args, **kwargs):
@@ -109,9 +110,17 @@ def parse_prompt(prompt_src: str, args):
     entrypoint = None
 
     prev_call = None
+    after_hole = False
     for segment_type, content in split_prompt(prompt_src):
+
         if segment_type == PromptSegment.BODY:
             cells.append(content)
+
+            if after_hole:
+                intersection = PROBABLE_STOPS.intersection(set(content))
+
+                if intersection:
+                    prompt_vars[prev_call].add_stop(intersection)
 
         elif segment_type == PromptSegment.VARIABLE:
             if content in prompt_vars:
@@ -122,14 +131,17 @@ def parse_prompt(prompt_src: str, args):
         elif segment_type == PromptSegment.HOLE:
             if content in prompt_vars:
                 raise ValueError(f"Variable {content} already defined")
-            else:
-                prompt_vars[content] = Completion(cells.copy())
-                if prev_call:
-                    prompt_vars[prev_call].add_done_callback(lambda fut, content=content: prompt_vars[content].start())
-                else:
-                    entrypoint = content
 
-                prev_call = content
+            prompt_vars[content] = Completion(cells.copy())
+
+            if prev_call:
+                prompt_vars[prev_call].add_done_callback(lambda fut, content=content: prompt_vars[content].start())
+            else:
+                entrypoint = content
+
+            after_hole = True
+
+            prev_call = content
 
             cells.append(prompt_vars[content])
 
@@ -149,7 +161,9 @@ class Prompt:
 
     def __getattr__(self, name):
         if name in self.prompt_vars:
-            return str(self.prompt_vars[name])
+            return self.prompt_vars[name].result()
+        else:
+            raise AttributeError(f"Prompt has no attribute {name}")
 
     def __str__(self):
         return "".join(str(cell) for cell in self.cells)
@@ -160,13 +174,23 @@ if __name__ == "__main__":
     @prompt
     def test(x, y=5):
         """
-        One kind of {x} is [answer].
+        One kind of {x} is [name].
 
-        {y} of them makes [another].
+        Several of them of them makes [group_name].
         """
 
-    out = test("domestic animal")
+    completion = test("domestic animal")
 
-    breakpoint()
+    import time
+    while True:
+        # clear screen
+        print("\033[H\033[J")
+        print(completion)
+        time.sleep(0.2)
+
+    # print(completion)
+    # print(completion.name)         # a dog.
+    # print(completion.group_name)   # a pack.
+
     # preprocess(prompt)
 
