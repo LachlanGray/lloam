@@ -5,7 +5,7 @@ from enum import Enum
 
 from completions import Completion, CompletionStatus
 
-PROBABLE_STOPS = set(["\n", ".", "?", "!", ":", ";", "(", ")", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
+PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "'", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
 
 def prompt(f):
     def wrapper(*args, **kwargs):
@@ -174,23 +174,44 @@ if __name__ == "__main__":
     @prompt
     def test(x, y=5):
         """
-        One kind of {x} is [name].
+        One kind of {x} is a [name].
 
-        Several of them of them makes [group_name].
+        {y} {name}s makes a [group_name].
         """
 
-    completion = test("domestic animal")
+    template = test("domestic animal")
 
     import time
-    while True:
-        # clear screen
-        print("\033[H\033[J")
-        print(completion)
-        time.sleep(0.2)
 
-    # print(completion)
-    # print(completion.name)         # a dog.
-    # print(completion.group_name)   # a pack.
+    for _ in range(3):
+        print(template)
+        print("---")
+        time.sleep(0.5)
 
-    # preprocess(prompt)
+    print(template.name)         # a dog
+    print(template.group_name)   # a pack
+
+
+    @prompt
+    def jsonify(entity):
+        """
+        \{"name": "{entity}", "color": "[color]", "taste": "[taste]" \}
+        """
+
+    template = jsonify("mango")
+    import time
+    import json
+
+    for _ in range(3):
+        print(template)
+        print("---")
+        time.sleep(1)
+
+    mango_json = json.loads(str(template).strip())
+    print(mango_json)
+
+
+
+
+
 
