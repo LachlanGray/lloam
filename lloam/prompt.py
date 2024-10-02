@@ -3,7 +3,7 @@ import inspect
 import re
 from enum import Enum
 
-from completions import Completion
+from completions import Completion, CompletionStatus
 
 
 def prompt(f):
@@ -22,10 +22,7 @@ def prompt(f):
         args = {k: v for k, v in zip(fn_args, args)}
         args = {**args, **kwargs}
 
-        prompt_src = preprocess(f)
-
-        prompt_graph = parse_prompt(prompt_src, args)
-        return prompt_graph
+        return Prompt(f, args)
 
     return wrapper
 
@@ -108,91 +105,54 @@ def split_prompt(text):
 
 def parse_prompt(prompt_src: str, args):
     prompt_vars = {**args}
-    prompt_holes = {}
-    cells = {}
+    cells = []
+    entrypoint = None
 
-    i = 0
+    prev_call = None
     for segment_type, content in split_prompt(prompt_src):
         if segment_type == PromptSegment.BODY:
-            cells[i] = content
+            cells.append(content)
 
         elif segment_type == PromptSegment.VARIABLE:
             if content in prompt_vars:
-                cells[i] = prompt_vars[content]
-            elif content in prompt_holes:
-                cells[i] = prompt_holes[content]
+                cells.append(prompt_vars[content])
             else:
                 raise ValueError(f"Variable {content} used before definition")
 
-
         elif segment_type == PromptSegment.HOLE:
             if content in prompt_vars:
-                raise ValueError(f"Variable {content} already defined; choose different name for hole")
-            elif content in prompt_holes:
-                raise ValueError(f"Hole {content} already defined")
+                raise ValueError(f"Variable {content} already defined")
             else:
-                prompt_holes[content] = i
+                prompt_vars[content] = Completion(cells.copy())
+                if prev_call:
+                    prompt_vars[prev_call].add_done_callback(lambda fut, content=content: prompt_vars[content].start())
+                else:
+                    entrypoint = content
 
+                prev_call = content
 
-            cells[i] = prompt_holes[content],
+            cells.append(prompt_vars[content])
 
         else:
             raise ValueError("Unknown segment type")
 
-        i += 1
 
-    return cells, prompt_vars, prompt_holes
+    return cells, prompt_vars, entrypoint
 
 
 class Prompt:
     def __init__(self, f, args):
         self.prompt_src = preprocess(f)
+        self.cells, self.prompt_vars, entrypoint = parse_prompt(self.prompt_src, args)
 
-        self.cells,
-        self.prompt_vars,
-        self.prompt_holes = parse_prompt(self.prompt_src, args)
-
-
-        self.completions = {}
-        self.active_hole = list(self.prompt_holes.keys())
-        prev_hole = list(self.prompt_holes.keys())[0]
-
-        for hole_name, loc in list(self.prompt_holes.items())[1:]:
-            self.completions[hole_name] = {
-                "completion": Completion()
-            }
-
-            self.completions[prev_hole]["next"] = hole_name
-            prev_hole = hole_name
-
-        self.prompt_state = ""
-        self.pc = 0
-
-        def completion_callback(completion):
-            while self.pc < self.prompt_holes[self.active_hole]:
-                self.prompt_state += self.cells[self.pc]
-                self.pc += 1
-
-            result = completion.result()
-
-            self.prompt_state += result
-            self.active_hole = self.completions[self.active_hole]["next"]
-            self.pc += 1
-
-
-
-
+        self.prompt_vars[entrypoint].start()
 
     def __getattr__(self, name):
         if name in self.prompt_vars:
-            return self.prompt_vars[name]
-        elif name in self.prompt_holes:
-            return self.completions[name]
-        elif name == "prompt":
-            return self.prompt_src
-        else:
-            raise AttributeError(f"Prompt has no attribute {name}")
+            return str(self.prompt_vars[name])
 
+    def __str__(self):
+        return "".join(str(cell) for cell in self.cells)
 
 
 if __name__ == "__main__":
@@ -200,19 +160,13 @@ if __name__ == "__main__":
     @prompt
     def test(x, y=5):
         """
-        What is an {x}? An {x} is [answer].
+        One kind of {x} is [answer].
 
-        {x} is not {y}.
-
-        These square braces are escaped \[something\]
-        As are these curlies \{something\}
-
-        Whats this \\? and this \\[ ?
+        {y} of them makes [another].
         """
 
-    out = test(1)
-    for k, v in out.items():
-        print(k, v)
+    out = test("domestic animal")
 
+    breakpoint()
     # preprocess(prompt)
 
