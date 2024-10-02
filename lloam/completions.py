@@ -3,6 +3,8 @@ import threading
 from concurrent.futures import Future
 from enum import Enum
 
+from typing import List, Optional, Dict, Union
+
 from streaming import stream_chat_completion
 
 class CompletionStatus(Enum):
@@ -12,12 +14,24 @@ class CompletionStatus(Enum):
     ERROR = 3
 
 
+def completion(
+    prompt: Union[str, List[str], List[Dict[str, str]]],
+    stop: Optional[str|List[str]] = None
+):
+    """
+    :param prompt: A string, openai-style chat list, or list of strings
+    :param stop: A stopping string, or list of stopping strings
+
+    :return: A Completion object
+    """
+
+    completion = Completion(prompt, stop)
+    completion.start()
+    return completion
+
+
 class Completion(Future):
     def __init__(self, prompt, stop=None):
-        """
-        :param prompt: A string, openai-style chat list, or list of strings
-        :param stop: A stopping string, or list of stopping strings
-        """
         super().__init__()
         self.prompt = prompt
         self.status = CompletionStatus.PENDING
@@ -28,7 +42,6 @@ class Completion(Future):
 
         self._async_gen_func = stream_chat_completion  # The async generator function
         self.chunks = []  # List to accumulate string chunks
-        self._loop = asyncio.new_event_loop()  # Create a new event loop
         self._thread = threading.Thread(target=self._start_loop)
 
     def start(self):
@@ -55,6 +68,7 @@ class Completion(Future):
             return "".join(self.chunks)
 
     def _start_loop(self):
+        self._loop = asyncio.new_event_loop()  # Create a new event loop
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._run_generator())
@@ -71,7 +85,6 @@ class Completion(Future):
                 for stop in self.stops:
                     if stop in prompt:
 
-                        # get number of trailing characters
                         trailing = len(prompt) - prompt.rfind(stop)
 
                         for _ in range(trailing):
@@ -82,11 +95,9 @@ class Completion(Future):
                         self.status = CompletionStatus.FINISHED
                         break
 
-
                 if self.status == CompletionStatus.FINISHED:
                     await gen.aclose()
                     break
-
 
             self.set_result(self.chunks)
             self.status = CompletionStatus.FINISHED

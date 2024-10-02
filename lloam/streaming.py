@@ -15,20 +15,22 @@ async def stream_chat_completion(
 
     if isinstance(messages, str):
         messages = [{"role": "user", "content": messages}]
-    
-    stream = await client.chat.completions.create(
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        stop=stop,
-        stream=True
-    )
     try:
-        async for chunk in stream:
-            if chunk.choices[0].delta.content is not None:
-                yield chunk.choices[0].delta.content
+        stream = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            stop=stop,
+            stream=True
+        )
+        try:
+            async for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+        finally:
+            await stream.close()
     finally:
-        await stream.close()
+        await client.close()
 
 
 async def parallel_stream_processing(questions: list[str]):
