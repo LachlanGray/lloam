@@ -5,7 +5,7 @@ from enum import Enum
 
 from .completions import Completion
 
-PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "`", "):", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
+PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "`", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
 
 def prompt(f):
     def wrapper(*args, **kwargs):
@@ -117,9 +117,15 @@ def parse_prompt(prompt_src: str, args):
             cells.append(content)
 
             if after_hole:
-                intersection = PROBABLE_STOPS.intersection(set(content.strip().split()[0]))
+                word_after = content.strip().split()[0]
+                intersection = PROBABLE_STOPS.intersection(word_after)
                 if intersection:
-                    prompt_vars[prev_call].add_stop(intersection)
+                    if word_after in PROBABLE_STOPS:
+                        prompt_vars[prev_call].add_stop(word_after)
+                    else:
+                        for i in range(1, len(word_after)):
+                            if word_after[:i] in PROBABLE_STOPS:
+                                prompt_vars[prev_call].add_stop(word_after[:i])
 
         elif segment_type == PromptSegment.VARIABLE:
             if content in prompt_vars:
