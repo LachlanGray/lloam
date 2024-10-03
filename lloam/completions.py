@@ -5,7 +5,7 @@ from enum import Enum
 
 from typing import List, Optional, Dict, Union
 
-from streaming import stream_chat_completion
+from .streaming import stream_chat_completion
 
 class CompletionStatus(Enum):
     PENDING = 0

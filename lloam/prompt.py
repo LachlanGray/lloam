@@ -3,7 +3,7 @@ import inspect
 import re
 from enum import Enum
 
-from completions import Completion, CompletionStatus
+from .completions import Completion, CompletionStatus
 
 PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "'", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
 

@@ -31,6 +31,7 @@ async def stream_chat_completion(
             await stream.close()
     finally:
         await client.close()
+        del client
 
 
 async def parallel_stream_processing(questions: list[str]):
