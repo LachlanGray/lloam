@@ -123,8 +123,25 @@ class Completion(Future):
 
 if __name__ == "__main__":
 
-    test = "who am I speaking to"
-    completion = Completion(test, stop="AI")
-    completion.start()
 
-    print(completion.result())
+    # messages
+    messages = [
+        {"role": "system", "content": "You speak in haikus"},
+        {"role": "user", "content": "What is loam?"}
+    ]
+    loam = completion(messages)
+
+
+    # strings
+    prompt = "Billy Joel said: Sing us a song you're "
+    lyric = completion(prompt, stop=[".", "!", "\n"])
+
+
+    # chunks
+    chunks = ["The capi", "tal of", " France ", "is", " "]
+    capitol = completion(chunks, stop=".")
+
+
+    print(loam.result())
+    print(lyric.result())
+    print(capitol.result())
