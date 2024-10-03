@@ -79,12 +79,21 @@ class Completion(Future):
         gen = self._async_gen_func(self.prompt)
         try:
             async for chunk in gen:
-                self.chunks.append(chunk)
 
                 prompt = "".join(self.chunks)
                 for stop in self.stops:
-                    if stop in prompt:
 
+                    if stop in chunk:
+                        leading = chunk.find(stop)
+
+                        if leading > 0:
+                            chunk = chunk[:leading]
+                            self.chunks.append(chunk)
+
+                        self.status = CompletionStatus.FINISHED
+                        break
+
+                    if stop in prompt:
                         trailing = len(prompt) - prompt.rfind(stop)
 
                         for _ in range(trailing):
@@ -98,6 +107,9 @@ class Completion(Future):
                 if self.status == CompletionStatus.FINISHED:
                     await gen.aclose()
                     break
+
+                self.chunks.append(chunk)
+
 
             self.set_result(self.chunks)
             self.status = CompletionStatus.FINISHED

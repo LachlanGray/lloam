@@ -3,9 +3,9 @@ import inspect
 import re
 from enum import Enum
 
-from .completions import Completion, CompletionStatus
+from .completions import Completion
 
-PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "'", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
+PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "`", "):", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
 
 def prompt(f):
     def wrapper(*args, **kwargs):
@@ -117,8 +117,7 @@ def parse_prompt(prompt_src: str, args):
             cells.append(content)
 
             if after_hole:
-                intersection = PROBABLE_STOPS.intersection(set(content))
-
+                intersection = PROBABLE_STOPS.intersection(set(content.strip().split()[0]))
                 if intersection:
                     prompt_vars[prev_call].add_stop(intersection)
 
