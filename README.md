@@ -26,7 +26,7 @@ def test(x, y=5):
     """
     One kind of {x} is a [name].
 
-    {y} {name}s makes a [group_name].
+    {y} {name}s make a [group_name].
     """
 
 template = test("domestic animal") # fills template in the background
@@ -34,8 +34,8 @@ template = test("domestic animal") # fills template in the background
 # ... code here runs immediately ...
 
 # access completions later
-print(template.name)           # dog
-print(template.group_name)     # pack
+print(template.name)           # cat
+print(template.group_name)     # clowder
 ```
 
 **Inspect running templates:**
@@ -52,15 +52,15 @@ for _ in range(3):
 
 # One kind of domestic animal is a [ ... ].
 #
-# 5 [ ... ]s makes a [     ].
+# 5 [ ... ]s make a [     ].
 # ---
-# One kind of domestic animal is a dog.
+# One kind of domestic animal is a cat.
 #
-# 5 dogs makes a [ ... ].
+# 5 cats make a [ ... ].
 # ---
-# One kind of domestic animal is a dog.
+# One kind of domestic animal is a cat.
 #
-# 5 dogs makes a pack.
+# 5 cats make a clowder.
 # ---
 
 
