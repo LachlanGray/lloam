@@ -7,6 +7,9 @@ Lloam is a minimal prompting library offering a clean way to write prompt templa
 - Call prompt templates as functions
 - Doesn't stream unwanted tokens
 
+```
+pip install lloam
+```
 
 ## Lloam Prompts
 Lloam prompts make a prompt template callable as a function. The prompt template goes in the docstring of the lloam function, and returns a `Prompt` object that runs the completions in the background.
