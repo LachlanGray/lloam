@@ -112,12 +112,15 @@ class Completion(Future):
                 self.chunks.append(chunk)
 
 
-            self.set_result(self.chunks)
             self.status = CompletionStatus.FINISHED
+            self.set_result(self.chunks)
+            await asyncio.sleep(0)
+
 
         except Exception as e:
             self.set_exception(e)
             self.status = CompletionStatus.ERROR
+            await asyncio.sleep(0)
 
 
     def result(self, timeout=None):
@@ -128,11 +131,11 @@ class Completion(Future):
         return "".join(res)
 
     def _cleanup(self):
-        self._thread.join()
-        if not self._loop.is_closed():
-            self._loop.close()
+        if self._thread.is_alive():
+            self._thread.join()
 
     def findall(self, pattern):
+        self.result()
         return re.findall(pattern, "".join(self.chunks))
 
     @property
