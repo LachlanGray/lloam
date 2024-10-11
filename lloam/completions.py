@@ -2,6 +2,7 @@ import asyncio
 import threading
 from concurrent.futures import Future
 from enum import Enum
+import re
 
 from typing import List, Optional, Dict, Union
 
@@ -130,6 +131,14 @@ class Completion(Future):
         self._thread.join()
         if not self._loop.is_closed():
             self._loop.close()
+
+    def findall(self, pattern):
+        return re.findall(pattern, "".join(self.chunks))
+
+    @property
+    def backticks(self):
+        pattern = r'`(.*?)`'
+        return self.findall(pattern)
 
 
 
