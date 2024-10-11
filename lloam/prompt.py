@@ -117,6 +117,10 @@ def parse_prompt(prompt_src: str, args):
             cells.append(content)
 
             if after_hole:
+
+                if content.strip() == "":
+                    continue
+
                 word_after = content.strip().split()[0]
                 intersection = PROBABLE_STOPS.intersection(word_after)
                 if intersection:
@@ -130,6 +134,8 @@ def parse_prompt(prompt_src: str, args):
         elif segment_type == PromptSegment.VARIABLE:
             if content in prompt_vars:
                 cells.append(prompt_vars[content])
+            elif content.split(".")[0] in prompt_vars:
+                cells.append(getattr(prompt_vars[content.split(".")[0]], content.split(".")[1]))
             else:
                 raise ValueError(f"Variable {content} used before definition")
 
