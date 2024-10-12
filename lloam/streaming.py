@@ -6,7 +6,7 @@ import re
 
 async def stream_chat_completion(
     messages: List[Dict[str, str]],
-    model: str = "gpt-3.5-turbo",
+    model: str = "gpt-4o-mini",
     temperature: float = 0.9,
     stop: Optional[List[str]] = None,
     api_key: Optional[str] = None

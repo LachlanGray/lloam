@@ -32,16 +32,20 @@ def completion(
 
 
 class Completion(Future):
-    def __init__(self, prompt, stop=None):
+    def __init__(self, prompt, stop=None, model="gpt-4o-mini", temperature=0.9):
         super().__init__()
         self.prompt = prompt
         self.status = CompletionStatus.PENDING
+        self.model = model
+        self.temperature = temperature
 
         self.stops = set()
         if stop:
             self.add_stop(stop)
 
-        self._async_gen_func = stream_chat_completion  # The async generator function
+        print(model)
+
+        self._async_gen_func = stream_chat_completion
         self.chunks = []  # List to accumulate string chunks
         self._thread = threading.Thread(target=self._start_loop)
 
@@ -77,7 +81,7 @@ class Completion(Future):
             self._loop.close()
 
     async def _run_generator(self):
-        gen = self._async_gen_func(self.prompt)
+        gen = self._async_gen_func(self.prompt, model=self.model, temperature=self.temperature)
         try:
             async for chunk in gen:
 

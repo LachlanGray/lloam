@@ -7,7 +7,32 @@ from .completions import Completion
 
 PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "`", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
 
-def prompt(f):
+# def prompt(model="gpt-4o-mini", temperature=0.9):
+def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
+
+    if f is None:
+        def decorator(f):
+            def wrapper(*args, **kwargs):
+                fn_args, default_kwargs = get_signature(f)
+
+                kwargs = {**default_kwargs, **kwargs}
+
+                if len(args) < len(fn_args):
+                    for arg in fn_args:
+                        if arg not in kwargs:
+                            raise ValueError(f"Missing postitional argument {arg}")
+
+                    raise ValueError(f"Expected {len(fn_args)} arguments, got {len(args)}")
+
+                args = {k: v for k, v in zip(fn_args, args)}
+                args = {**args, **kwargs}
+
+                return Prompt(f, args, model=model, temperature=temperature)
+
+            return wrapper
+
+        return decorator
+
     def wrapper(*args, **kwargs):
         fn_args, default_kwargs = get_signature(f)
 
@@ -23,9 +48,15 @@ def prompt(f):
         args = {k: v for k, v in zip(fn_args, args)}
         args = {**args, **kwargs}
 
+
         return Prompt(f, args)
 
     return wrapper
+
+    # if callable(model):
+        # return decorator(model)  # When the decorator is used without arguments, like @prompt
+
+    # return decorator
 
 
 def preprocess(f: callable):
@@ -104,7 +135,7 @@ def split_prompt(text):
     return result
 
 
-def parse_prompt(prompt_src: str, args):
+def parse_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
     prompt_vars = {**args}
     cells = []
     entrypoint = None
@@ -152,7 +183,7 @@ def parse_prompt(prompt_src: str, args):
             if content in prompt_vars:
                 raise ValueError(f"Variable {content} already defined")
 
-            prompt_vars[content] = Completion(cells.copy())
+            prompt_vars[content] = Completion(cells.copy(), model=model, temperature=temperature)
 
             if prev_call:
                 prompt_vars[prev_call].add_done_callback(lambda fut, content=content: prompt_vars[content].start())
@@ -173,9 +204,9 @@ def parse_prompt(prompt_src: str, args):
 
 
 class Prompt:
-    def __init__(self, f, args):
+    def __init__(self, f, args, model="gpt-4o-mini", temperature=0.9):
         self.prompt_src = preprocess(f)
-        self.cells, self.prompt_vars, entrypoint = parse_prompt(self.prompt_src, args)
+        self.cells, self.prompt_vars, entrypoint = parse_prompt(self.prompt_src, args, model=model, temperature=temperature)
 
         self.prompt_vars[entrypoint].start()
 
