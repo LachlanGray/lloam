@@ -134,8 +134,17 @@ def parse_prompt(prompt_src: str, args):
         elif segment_type == PromptSegment.VARIABLE:
             if content in prompt_vars:
                 cells.append(prompt_vars[content])
-            elif content.split(".")[0] in prompt_vars:
-                cells.append(getattr(prompt_vars[content.split(".")[0]], content.split(".")[1]))
+
+            elif "." in content:
+                obj_name, *attributes = content.split(".")
+                obj = prompt_vars[obj_name]
+
+                nested_result = obj
+                for attribute in attributes:
+                    nested_result = eval("nested_result." + attribute)
+
+                cells.append(nested_result)
+
             else:
                 raise ValueError(f"Variable {content} used before definition")
 
