@@ -32,6 +32,10 @@ def completion(
 
 
 class Completion(Future):
+    completions_loop = None
+    completions_thread = None
+
+
     def __init__(self, prompt, stop=None, model="gpt-4o-mini", temperature=0.9):
         super().__init__()
         self.prompt = prompt
@@ -43,11 +47,29 @@ class Completion(Future):
         if stop:
             self.add_stop(stop)
 
-        print(model)
-
         self._async_gen_func = stream_chat_completion
-        self.chunks = []  # List to accumulate string chunks
-        self._thread = threading.Thread(target=self._start_loop)
+        self.chunks = []
+
+        self._initialize_event_loop_in_thread()
+
+
+    @classmethod
+    def _initialize_event_loop_in_thread(cls):
+        if cls.completions_loop is not None:
+            return
+
+        def run_loop():
+            cls.completions_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(cls.completions_loop)
+            cls.completions_loop.run_forever()
+
+        cls.completions_thread = threading.Thread(target=run_loop, daemon=True)
+        cls.completions_thread.start()
+
+        # Wait for the loop to be created
+        while cls.completions_loop is None:
+            pass
+
 
     def start(self):
         if self.prompt is None:
@@ -55,8 +77,10 @@ class Completion(Future):
         if isinstance(self.prompt, list) and isinstance(self.prompt[0], str):
             self.prompt = "".join([str(x) for x in self.prompt])
 
-        self._thread.start()
+
         self.status = CompletionStatus.RUNNING
+        asyncio.run_coroutine_threadsafe(self._run_generator(), self.completions_loop)
+
 
     def add_stop(self, stop):
         if isinstance(stop, str):
@@ -72,42 +96,18 @@ class Completion(Future):
         elif self.status == CompletionStatus.FINISHED:
             return "".join(self.chunks)
 
-    def _start_loop(self):
-        self._loop = asyncio.new_event_loop()  # Create a new event loop
-        asyncio.set_event_loop(self._loop)
-        try:
-            self._loop.run_until_complete(self._run_generator())
-        finally:
-            self._loop.close()
+
+    def result(self, timeout=None):
+        chunks = super().result(timeout=timeout)
+        return "".join(chunks)
+
 
     async def _run_generator(self):
         gen = self._async_gen_func(self.prompt, model=self.model, temperature=self.temperature)
         try:
             async for chunk in gen:
 
-                prompt = "".join(self.chunks)
-                for stop in self.stops:
-
-                    if stop in chunk:
-                        leading = chunk.find(stop)
-
-                        if leading > 0:
-                            chunk = chunk[:leading]
-                            self.chunks.append(chunk)
-
-                        self.status = CompletionStatus.FINISHED
-                        break
-
-                    if stop in prompt:
-                        trailing = len(prompt) - prompt.rfind(stop)
-
-                        for _ in range(trailing):
-                            self.chunks[-1] = self.chunks[-1][:-1]
-                            if self.chunks[-1] == "":
-                                self.chunks.pop(-1)
-
-                        self.status = CompletionStatus.FINISHED
-                        break
+                self._refresh_status(chunk)
 
                 if self.status == CompletionStatus.FINISHED:
                     await gen.aclose()
@@ -115,28 +115,39 @@ class Completion(Future):
 
                 self.chunks.append(chunk)
 
-
             self.status = CompletionStatus.FINISHED
             self.set_result(self.chunks)
-            await asyncio.sleep(0)
-
 
         except Exception as e:
             self.set_exception(e)
             self.status = CompletionStatus.ERROR
-            await asyncio.sleep(0)
 
 
-    def result(self, timeout=None):
-        # Wait for the future to complete
-        res = super().result(timeout=timeout)
-        # Clean up the thread and event loop
-        self._cleanup()
-        return "".join(res)
+    def _refresh_status(self, chunk):
+        prompt = "".join(self.chunks)
+        for stop in self.stops:
 
-    def _cleanup(self):
-        if self._thread.is_alive():
-            self._thread.join()
+            if stop in chunk:
+                leading = chunk.find(stop)
+
+                if leading > 0:
+                    chunk = chunk[:leading]
+                    self.chunks.append(chunk)
+
+                self.status = CompletionStatus.FINISHED
+                break
+
+            if stop in prompt:
+                trailing = len(prompt) - prompt.rfind(stop)
+
+                for _ in range(trailing):
+                    self.chunks[-1] = self.chunks[-1][:-1]
+                    if self.chunks[-1] == "":
+                        self.chunks.pop(-1)
+
+                self.status = CompletionStatus.FINISHED
+                break
+
 
     def findall(self, pattern):
         self.result()
