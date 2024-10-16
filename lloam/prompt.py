@@ -172,7 +172,7 @@ def parse_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
 
                 nested_result = obj
                 for attribute in attributes:
-                    nested_result = eval("nested_result." + attribute)
+                    nested_result = getattr(nested_result, attribute)
 
                 cells.append(nested_result)
 
