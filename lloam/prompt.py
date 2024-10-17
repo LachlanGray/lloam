@@ -2,8 +2,10 @@ import textwrap
 import inspect
 import re
 from enum import Enum
+from concurrent.futures import Future
+import asyncio
 
-from .completions import Completion
+from .completions import Completion, CompletionStatus
 
 PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "`", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
 
@@ -164,7 +166,10 @@ def parse_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
 
         elif segment_type == PromptSegment.VARIABLE:
             if content in prompt_vars:
-                cells.append(prompt_vars[content])
+                if isinstance(prompt_vars[content], Prompt):
+                    cells.append(prompt_vars[content].result())
+                else:
+                    cells.append(prompt_vars[content])
 
             elif "." in content:
                 obj_name, *attributes = content.split(".")
@@ -218,6 +223,35 @@ class Prompt:
 
     def __str__(self):
         return "".join(str(cell) for cell in self.cells)
+
+    def __await__(self):
+        return self._check_completion().__await__()
+
+    async def _check_completion(self):
+        completions = [var for var in self.prompt_vars.values() if isinstance(var, Completion)]
+        while not all(var.status == CompletionStatus.FINISHED for var in completions):
+            # Yield control back to the event loop for a while before rechecking
+            await asyncio.sleep(0.1)
+        return True
+
+    def result(self):
+        chunks = []
+        for cell in self.cells:
+            if isinstance(cell, Completion):
+                chunks.append(cell.result())
+            else:
+                chunks.append(cell)
+
+        return "".join(chunks)
+
+
+    def progress(self):
+        n_completions = sum(1 for var in self.prompt_vars.values() if isinstance(var, Completion))
+        n_completed = sum(1 for var in self.prompt_vars.values() if isinstance(var, Completion) and var.status == CompletionStatus.FINISHED)
+
+        n_waiting = n_completions - n_completed
+
+        return n_completed, n_waiting
 
 
 if __name__ == "__main__":
