@@ -230,15 +230,17 @@ class Prompt:
             await asyncio.sleep(0.1)
         return True
 
-    def result(self):
+
+    def inspect(self):
         chunks = []
         for cell in self.cells:
             if isinstance(cell, Completion):
-                chunks.append(cell.result())
+                chunks.append(cell.visual_status())
             else:
-                chunks.append(cell)
+                chunks.append(str(cell))
 
         return "".join(chunks)
+
 
 
     def progress(self):
@@ -273,23 +275,23 @@ if __name__ == "__main__":
     print(template.group_name)   # a pack
 
 
-    @prompt
-    def jsonify(entity):
-        """
-        \{"name": "{entity}", "color": "[color]", "taste": "[taste]" \}
-        """
+    # @prompt
+    # def jsonify(entity):
+    #     """
+    #     \{"name": "{entity}", "color": "[color]", "taste": "[taste]" \}
+    #     """
 
-    template = jsonify("mango")
-    import time
-    import json
+    # template = jsonify("mango")
+    # import time
+    # import json
 
-    for _ in range(3):
-        print(template)
-        print("---")
-        time.sleep(1)
+    # for _ in range(3):
+    #     print(template)
+    #     print("---")
+    #     time.sleep(1)
 
-    mango_json = json.loads(str(template).strip())
-    print(mango_json)
+    # mango_json = json.loads(str(template).strip())
+    # print(mango_json)
 
 
 

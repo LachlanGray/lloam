@@ -94,6 +94,10 @@ class Completion(Future):
             self.stops.update(set(stop))
 
     def __str__(self):
+        return self.result()
+
+
+    def visual_status(self):
         if self.status == CompletionStatus.PENDING:
             return "[     ]"
         elif self.status == CompletionStatus.RUNNING:
