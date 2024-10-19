@@ -1,7 +1,11 @@
 import threading
+import os
 
 from .prompt import Prompt
 from .completions import Completion, CompletionStatus
+
+
+lock = threading.Lock()
 
 class Agent:
     def get_lloam_members(self):
@@ -70,13 +74,9 @@ class Agent:
 
         def process_member(kk, vv):
             if isinstance(vv, dict):
-                result.append("[")
+                result.append(f"[")
                 for k, v in vv.items():
                     process_member(k, v)
-
-                if result[-1] == "[":
-                    result.pop(-1)
-                    return
 
                 result.append("]")
 
@@ -85,20 +85,13 @@ class Agent:
                 for v in vv:
                     process_member(None, v)
 
-                if result[-1] == "[":
-                    result.pop(-1)
-                    return
                 result.append("]")
 
             elif isinstance(vv, Prompt):
                 n_complete, n_waiting = vv.progress()
-                if n_waiting == 0:
-                    return
 
-                result.append("[")
                 result.append(n_complete * done)
                 result.append(n_waiting * waiting)
-                result.append("]")
 
             elif isinstance(vv, Completion):
                 status = vv.status
@@ -114,10 +107,7 @@ class Agent:
 
 
     def observe(self):
-        import threading
-        import os
 
-        # Event to signal the observation thread to stop
         stop_event = threading.Event()
 
         def display_progress():
@@ -127,17 +117,28 @@ class Agent:
                     os.system('cls' if os.name == 'nt' else 'clear')
 
                     # Get the progress
-                    progress = self.format_progress()
+                    with lock:
+                        progress = self.format_progress()
+                        print(progress)
+                        print()
+                        print("(Press Enter to end observation)")
 
-                    print(progress)
-
-                    # Wait for 0.5 seconds or until stop_event is set
-                    stop_event.wait(0.5)
+                    # Wait for 0.1 seconds or until stop_event is set
+                    stop_event.wait(0.1)
             except Exception as e:
                 print(f"An error occurred in the observation thread: {e}")
 
-        # Start the background thread
+
+        def wait_for_enter():
+            input()  # Wait for Enter key press
+            stop_event.set()  # Set the stop event when Enter is pressed
+
+        # Start the background thread to display progress
         observer_thread = threading.Thread(target=display_progress, daemon=True)
         observer_thread.start()
 
-        return stop_event
+        # Start the thread to wait for Enter key press
+        input_thread = threading.Thread(target=wait_for_enter, daemon=True)
+        input_thread.start()
+
+
