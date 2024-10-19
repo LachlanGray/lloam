@@ -55,10 +55,6 @@ def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
 
     return wrapper
 
-    # if callable(model):
-        # return decorator(model)  # When the decorator is used without arguments, like @prompt
-
-    # return decorator
 
 
 def preprocess(f: callable):
@@ -95,7 +91,7 @@ class PromptSegment(Enum):
     BODY = "body"
 
 
-def split_prompt(text):
+def parse_prompt(text):
     # Define patterns for escaped characters
     escape_pattern = re.compile(r'\\.')
 
@@ -137,14 +133,14 @@ def split_prompt(text):
     return result
 
 
-def parse_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
+def compile_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
     prompt_vars = {**args}
     cells = []
     entrypoint = None
 
     prev_call = None
     after_hole = False
-    for segment_type, content in split_prompt(prompt_src):
+    for segment_type, content in parse_prompt(prompt_src):
 
         if segment_type == PromptSegment.BODY:
             cells.append(content)
@@ -211,7 +207,7 @@ def parse_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
 class Prompt:
     def __init__(self, f, args, model="gpt-4o-mini", temperature=0.9):
         self.prompt_src = preprocess(f)
-        self.cells, self.prompt_vars, entrypoint = parse_prompt(self.prompt_src, args, model=model, temperature=temperature)
+        self.cells, self.prompt_vars, entrypoint = compile_prompt(self.prompt_src, args, model=model, temperature=temperature)
 
         self.prompt_vars[entrypoint].start()
 
