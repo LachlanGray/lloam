@@ -30,8 +30,13 @@ def completion(
     completion.start()
     return completion
 
+# TODO: Rename to RunningCompletion, have it return Completion which inherits from str
 
 class Completion(Future):
+    """
+    Accumulates/manages streamed tokens for one completion.
+    Manages stopping conditions.
+    """
     completions_loop = None
     completions_thread = None
 
@@ -97,11 +102,6 @@ class Completion(Future):
             return "".join(self.chunks)
 
 
-    def result(self, timeout=None):
-        chunks = super().result(timeout=timeout)
-        return "".join(chunks)
-
-
     async def _run_generator(self):
         gen = self._async_gen_func(self.prompt, model=self.model, temperature=self.temperature)
         try:
@@ -116,7 +116,7 @@ class Completion(Future):
                 self.chunks.append(chunk)
 
             self.status = CompletionStatus.FINISHED
-            self.set_result(self.chunks)
+            self.set_result("".join(self.chunks))
 
         except Exception as e:
             self.set_exception(e)
@@ -148,10 +148,15 @@ class Completion(Future):
                 self.status = CompletionStatus.FINISHED
                 break
 
-
     def findall(self, pattern):
         self.result()
         return re.findall(pattern, "".join(self.chunks))
+
+    @property
+    def text(self):
+        text = super().result()
+        return text
+
 
     @property
     def backticks(self):
