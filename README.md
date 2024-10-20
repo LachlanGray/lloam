@@ -8,11 +8,14 @@ Lloam is a minimal prompting library offering a clean way to write prompts and m
 - **Lloam prompts:** clean function syntax for inline prompts
 
 
+## Usage
+
 ```
 pip install lloam
 ```
 
-## Usage
+Overview: [completions](#lloam-completions), [prompts](#lloam-prompts), [agents](#lloam-agents)
+
 ### Lloam Completions
 
 `lloam.completion` is a simple and familiar way to generate completions. It returns a `Completion` object, which manages the token stream.  Tokens are accumulated concurrently, meaning completions won't block your program until you acess their results (e.g. with `str()` or `print()`).
