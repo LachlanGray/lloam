@@ -14,7 +14,7 @@ async def stream_chat_completion(
     client = AsyncOpenAI(api_key=api_key)
 
     if isinstance(messages, str):
-        messages = [{"role": "user", "content": messages}]
+        messages = [{"role": "assistant", "content": messages}]
     try:
         stream = await client.chat.completions.create(
             model=model,
