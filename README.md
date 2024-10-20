@@ -1,7 +1,7 @@
 ![](assets/lloam.png)
 *Rich primitives for building with LLMs*
 # Lloam 🌱
-Lloam is a minimal prompting library offering a clean way to write prompt templates and manage their execution. Key features:
+Lloam is a minimal prompting library offering a clean way to write prompts and manage their execution. Key features:
 
 - **Parallel:** completions run concurrently
 - **Lightweight:** only dependency is `openai`
@@ -15,7 +15,7 @@ pip install lloam
 ## Usage
 ### Lloam Completions
 
-`lloam.completion` is a simple and familiar way to generate completions. It returns a `Completion` object, which manages the token stream.  Tokens are accumulated concurrently, meaning they won't block your program until you acess their results (e.g. with `str()` or `print()`).
+`lloam.completion` is a simple and familiar way to generate completions. It returns a `Completion` object, which manages the token stream.  Tokens are accumulated concurrently, meaning completions won't block your program until you acess their results (e.g. with `str()` or `print()`).
 
 ```python
 from lloam import completion
