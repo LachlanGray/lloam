@@ -17,7 +17,8 @@ class CompletionStatus(Enum):
 
 def completion(
     prompt: Union[str, List[str], List[Dict[str, str]]],
-    stop: Optional[str|List[str]] = None
+    stop: Optional[str|List[str]] = None,
+    model: str = "gpt-4o-mini"
 ):
     """
     :param prompt: A string, openai-style chat list, or list of strings
