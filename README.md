@@ -103,7 +103,12 @@ print(musician_type.group_name)
 ```
 
 ### Lloam Agents
-Lloam encourages you to think of an agent as a datastructure around language. Here's how you might go about making a RAG Agent. It maintains a chat history, and a context for artifacts it has retrieved from its database.
+Lloam encourages you to think of an agent as a datastructure around language. Here's how you could make a RAG Agent that has 
+- a chat history
+
+- a database
+
+- a context for retrieved artifacts
 
 You can see another example in `examples/shell_agent.py`. More stuff on agents coming soon!
 
