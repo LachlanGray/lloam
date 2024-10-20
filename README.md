@@ -2,118 +2,145 @@
 *Rich primitives for building with LLMs*
 # Lloam 🌱
 Lloam is a minimal prompting library offering a clean way to write prompt templates and manage their execution. Key features:
-- Manage parallel completions without touching `asyncio`
-- Light: only dependency is `openai`
-- Call prompt templates as functions
-- Doesn't stream unwanted tokens
+
+- **Parallel:** completions run concurrently
+- **Lightweight:** only dependency is `openai`
+- **Lloam prompts:** clean function syntax for inline prompts
+
 
 ```
 pip install lloam
 ```
 
-## Lloam Prompts
-Lloam prompts make a prompt template callable as a function. The prompt template goes in the docstring of the lloam function, and returns a `Prompt` object that runs the completions in the background.
-- *Variables* (`{x}`) are substituded into the prompt with curly braces like f-strings.
-- *Holes* (`[name]`) are filled by the language model, and can be used as variables afterward.
-- Completions run in the background and only block when you access variables
+## Usage
+### Lloam Completions
 
-
-```python
-import lloam
-
-@lloam.prompt
-def test(x, y=5):
-    """
-    One kind of {x} is a [name].
-
-    {y} {name}s make a [group_name].
-    """
-
-template = test("domestic animal") # fills template in the background
-
-# ... code here runs immediately ...
-
-# access completions later
-print(template.name)           # cat
-print(template.group_name)     # clowder
-```
-
-**Inspect running templates:**
-You can print a template while it's running to investigate its state.
-```python
-template = test("domestic animal")
-
-import time
-
-for _ in range(3):
-    print(template)
-    print("---")
-    time.sleep(0.5)
-
-# One kind of domestic animal is a [ ... ].
-#
-# 5 [ ... ]s make a [     ].
-# ---
-# One kind of domestic animal is a cat.
-#
-# 5 cats make a [ ... ].
-# ---
-# One kind of domestic animal is a cat.
-#
-# 5 cats make a clowder.
-# ---
-
-
-
-```
-**Infer stopping conditions:** Uses the context of a prompt to infer stopping conditions, like quotes, commas, and periods
-
-```python
-@lloam.prompt
-def jsonify(entity):
-    """
-    \{"name": "{entity}", "color": "[color]", "taste": "[taste]" \}
-    """
-
-template = jsonify("mango")
-
-mango_json = json.loads(str(template).strip())
-print(mango_json)
-# {'name': 'mango', 'color': 'yellow', 'taste': 'sweet and tangy'}
-```
-
-## Lloam Completions
-For a traditional completion, use the `completion` function. A completion runs in the background until you call `.result()`, making it simple to run several completions in parallel without blocking your program.
+`lloam.completion` is a simple and familiar way to generate completions. It returns a `Completion` object, which manages the token stream.  Tokens are accumulated concurrently, meaning they won't block your program until you acess their results (e.g. with `str()` or `print()`).
 
 ```python
 from lloam import completion
 
-# messages
-messages = [
-    {"role": "system", "content": "You are a helpful assistant"},
-    {"role": "user", "content": "What is loam?"}
-]
-loam_definition = completion(messages)
 
 # strings
-prompt = "Billy Joel said: Sing us a song you're "
-lyric = completion(prompt, stop=[".", "!", "\n"])
+prompt = "Snap, crackle, and"
+who = completion(prompt, stop="!", model="gpt-3.5-turbo")
 
-# chunks
-chunks = ["The capi", "tal of", " France ", "is", " "]
-capitol = completion(chunks, stop=".")
+# lists
+chunks = ["The capi", "tal of", " France ", "is", "?"]
+capitol = completion(chunks, stop=[".", "!"])
 
+messages = [
+    {"role": "system", "content": "You answer questions in haikus"},
+    {"role": "user", "content": "What's loam"}
+]
+poem = completion(messages)
 
-print(loam.result())
-# Loam is fertile soil,
-# A mix of sand, silt, and clay,
-# Perfect for planting.
+# ...completions are running concurrently...
 
-print(lyric.result())
-# the piano man 
-
-print(capitol.result())
-# Paris
-
+print(who)     # pop
+print(capitol) # The capital of France is Paris
+print(poem)    # Soil rich and robust,
+               # A blend of clay, sand, and silt,
+               # Perfect for planting.
 ```
 
+### Lloam Prompts
+Lloam prompts offer a clean templating syntax you can use to write more complex prompts inline. The language model fills the `[holes]`, while `{variables}` are substituted into the prompt. Lloam prompts run concurrently just like completions, under the hood they are managing a sequence of Completions.
+
+```python
+import lloam
+
+@lloam.prompt(model="gpt-3.5-turbo")
+def group_name(x, n=5):
+    """
+    One kind of {x} is a [name].
+
+    {n} {name}s makes a [group_name].
+    """
+
+
+animal = group_name("domestic animal")
+print("This prints immediately!")
+
+# access variables later
+print(animal.name)           # dog
+print(animal.group_name)     # pack
+```
+
+You can also inspect the live state of a prompt with `.inspect()`:
+
+```python
+musician_type = group_name("musician", n=3)
+
+import time
+for _ in range(3):
+    print(musician_type.inspect())
+    print("---")
+    time.sleep(0.5)
+
+print(musician_type.name)
+print(musician_type.group_name)
+
+# output:
+
+# One kind of musician is a [ ... ].
+
+# 3 [ ... ]s makes a [     ].
+# ---
+# One kind of musician is a singer-songwriter.
+
+# 3 singer-songwriters makes a [ ... ].
+# ---
+# One kind of musician is a singer-songwriter.
+
+# 3 singer-songwriters makes a trio.
+# ---
+# singer-songwriter
+# trio
+```
+
+### Lloam Agents
+Lloam encourages you to think of an agent as a datastructure around language. Here's how you might go about making a RAG Agent. It maintains a chat history, and a context for artifacts it has retrieved from its database.
+
+You can see another example in `examples/shell_agent.py`. More stuff on agents coming soon!
+
+```python
+import lloam
+
+class RagAgent:
+    def __init__(self, db):
+        self.db = db
+        self.history = []
+        self.artifacts = {}
+
+    def ask(self, question):
+        self.history.append({"role": "user", "content": question})
+
+        results = self.db.query(question)
+        self.artifacts.update(results)
+
+        answer = self.answer(question)
+
+        self.history.append({"role": "assistant", "content": answer.answer})
+
+        return {
+            "answer": answer.answer
+            "followup": answer.followup
+        }
+
+
+    @lloam.prompt
+    def answer(self, question):
+        """
+        {self.artifacts}
+        ---
+        {self.history}
+
+        user: {question}
+
+        [answer]
+
+        What would be a good followup question?
+        [followup]
+        """
+```
