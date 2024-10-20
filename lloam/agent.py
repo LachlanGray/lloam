@@ -141,4 +141,6 @@ class Agent:
         input_thread = threading.Thread(target=wait_for_enter, daemon=True)
         input_thread.start()
 
+        return stop_event
+
 
