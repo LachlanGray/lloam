@@ -33,7 +33,7 @@ def completion(
 
 # TODO: Rename to RunningCompletion, have it return Completion which inherits from str
 
-class Completion(Future):
+class Completion:
     """
     Accumulates/manages streamed tokens for one completion.
     Manages stopping conditions.
@@ -49,12 +49,19 @@ class Completion(Future):
         self.model = model
         self.temperature = temperature
 
+        self._done_callbacks = []
+        self._exception = None
+        self._result = None
+        self._done_event = threading.Event()
+        self._callback_lock = threading.Lock()
+
         self.stops = set()
         if stop:
             self.add_stop(stop)
 
         self._async_gen_func = stream_chat_completion
         self.chunks = []
+        self._chunks_lock = threading.Lock()
 
         self._initialize_event_loop_in_thread()
 
@@ -104,11 +111,14 @@ class Completion(Future):
         elif self.status == CompletionStatus.RUNNING:
             return "[ ... ]"
         elif self.status == CompletionStatus.FINISHED:
-            return "".join(self.chunks)
+            with self._chunks_lock:
+                return "".join(self.chunks)
 
 
     async def _run_generator(self):
-        gen = self._async_gen_func(self.prompt, model=self.model, temperature=self.temperature)
+        gen = self._async_gen_func(
+            self.prompt, model=self.model, temperature=self.temperature
+        )
         try:
             async for chunk in gen:
 
@@ -118,10 +128,15 @@ class Completion(Future):
                     await gen.aclose()
                     break
 
-                self.chunks.append(chunk)
+                with self._chunks_lock:
+                    self.chunks.append(chunk)
 
             self.status = CompletionStatus.FINISHED
-            self.set_result("".join(self.chunks))
+            with self._chunks_lock:
+                result = "".join(self.chunks)
+
+            self.set_result(result)
+
 
         except Exception as e:
             self.set_exception(e)
@@ -137,7 +152,8 @@ class Completion(Future):
 
                 if leading > 0:
                     chunk = chunk[:leading]
-                    self.chunks.append(chunk)
+                    with self._chunks_lock:
+                        self.chunks.append(chunk)
 
                 self.status = CompletionStatus.FINISHED
                 break
@@ -152,6 +168,47 @@ class Completion(Future):
 
                 self.status = CompletionStatus.FINISHED
                 break
+
+
+    # Future-like methods
+    def add_done_callback(self, fn):
+        with self._callback_lock:
+            if self._done_event.is_set():
+                fn(self)
+            else:
+                self._done_callbacks.append(fn)
+
+    def set_result(self, result):
+        self._result = result
+        self._done_event.set()
+        self._invoke_callbacks()
+
+    def set_exception(self, exception):
+        self._exception = exception
+        self._done_event.set()
+        self._invoke_callbacks()
+
+    def result(self, timeout=None):
+        if not self._done_event.wait(timeout):
+            raise TimeoutError()
+        if self._exception:
+            raise self._exception
+        with self._chunks_lock:
+            return "".join(self.chunks)
+
+    def _invoke_callbacks(self):
+        with self._callback_lock:
+            for fn in self._done_callbacks:
+                try:
+                    fn(self)
+                except Exception as e:
+                    raise e
+
+            self._done_callbacks = []
+
+    def done(self):
+        return self._done_event.is_set()
+
 
     def findall(self, pattern):
         self.result()
