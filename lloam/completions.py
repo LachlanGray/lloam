@@ -88,8 +88,10 @@ class Completion:
         if self.prompt is None:
             raise ValueError("Prompt not set")
         if isinstance(self.prompt, list) and isinstance(self.prompt[0], str):
-            self.prompt = "".join([str(x) for x in self.prompt])
+            if self in self.prompt:
+                self.prompt = self.prompt[:self.prompt.index(self)].copy()
 
+            self.prompt = "".join([str(x) for x in self.prompt])
 
         self.status = CompletionStatus.RUNNING
         asyncio.run_coroutine_threadsafe(self._run_generator(), self.completions_loop)

@@ -23,14 +23,14 @@ class ShellAgent(lloam.Agent):
             cmd = backticks(action.actions)[0]
             print(cmd)
 
-            if cmd is None:
+            if cmd == "":
                 continue
 
             if cmd.startswith("exit"):
                 return
 
             observation = self.run(cmd)
-            self.command_history += f"\n${cmd}\n{observation}"
+            self.command_history += f"\n$ {cmd}\n{observation}"
 
 
     @lloam.prompt
@@ -49,15 +49,18 @@ class ShellAgent(lloam.Agent):
         Concisely, what should I do next?
         [thought]
 
-        What's the next command I should run? (Please put just one command in `backticks`)
+        What's the next command I should run? (Please write just one command in `backticks`)
         [actions]
         """
 
     def run(self, command):
         command = command.strip().split()
 
-        if command[0] not in self.allowed_commands:
-            return f"Command not allowed: {command[0]}"
+        try:
+            if command[0] not in self.allowed_commands:
+                return f"Command not allowed: {command[0]}"
+        except:
+            breakpoint()
 
         result = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         output = result.stdout if result.returncode == 0 else result.stderr

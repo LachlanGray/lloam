@@ -7,9 +7,7 @@ import asyncio
 
 from .completions import Completion, CompletionStatus
 
-PROBABLE_STOPS = set([".", ",", "?", "!", ":", ";", "(", ")", "\"", "`", "__ESCAPED_OPEN_BRACE__", "__ESCAPED_CLOSE_BRACE__", "__ESCAPED_OPEN_BRACKET__", "__ESCAPED_CLOSE_BRACKET__"])
 
-# def prompt(model="gpt-4o-mini", temperature=0.9):
 def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
 
     if f is None:
@@ -140,35 +138,20 @@ def compile_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
 
     prev_call = None
     after_hole = False
-    for segment_type, content in parse_prompt(prompt_src):
+    for segment_type, symbol in parse_prompt(prompt_src):
 
         if segment_type == PromptSegment.BODY:
-            cells.append(content)
-
-            if after_hole:
-
-                if content.strip() == "":
-                    continue
-
-                word_after = content.strip().split()[0]
-                intersection = PROBABLE_STOPS.intersection(word_after)
-                if intersection:
-                    if word_after in PROBABLE_STOPS:
-                        prompt_vars[prev_call].add_stop(word_after)
-                    else:
-                        for i in range(1, len(word_after)):
-                            if word_after[:i] in PROBABLE_STOPS:
-                                prompt_vars[prev_call].add_stop(word_after[:i])
+            cells.append(symbol)
 
         elif segment_type == PromptSegment.VARIABLE:
-            if content in prompt_vars:
-                if isinstance(prompt_vars[content], Prompt):
-                    cells.append(prompt_vars[content].result())
+            if symbol in prompt_vars:
+                if isinstance(prompt_vars[symbol], Prompt):
+                    cells.append(prompt_vars[symbol].result())
                 else:
-                    cells.append(prompt_vars[content])
+                    cells.append(prompt_vars[symbol])
 
-            elif "." in content:
-                obj_name, *attributes = content.split(".")
+            elif "." in symbol:
+                obj_name, *attributes = symbol.split(".")
                 obj = prompt_vars[obj_name]
 
                 nested_result = obj
@@ -178,24 +161,32 @@ def compile_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
                 cells.append(nested_result)
 
             else:
-                raise ValueError(f"Variable {content} used before definition")
+                raise ValueError(f"Variable {symbol} used before definition")
 
         elif segment_type == PromptSegment.HOLE:
-            if content in prompt_vars:
-                raise ValueError(f"Variable {content} already defined")
+            if symbol in prompt_vars:
+                raise ValueError(f"Variable {symbol} already defined")
 
-            prompt_vars[content] = Completion(cells.copy(), model=model, temperature=temperature)
+            stop = None
+            if ":" in symbol:
+                symbol, regexp = symbol.split(":")
+                symbol = symbol.strip()
+                stop = regexp.strip()
+
+            completion = Completion(
+                cells, stop=stop, model=model, temperature=temperature
+            )
+
+            cells.append(completion)
+            prompt_vars[symbol] = completion
 
             if prev_call:
-                prompt_vars[prev_call].add_done_callback(lambda fut, content=content: prompt_vars[content].start())
+                # TODO: us Prompt/Completion/Agent start() method
+                prompt_vars[prev_call].add_done_callback(lambda fut, content=symbol: prompt_vars[content].start())
             else:
-                entrypoint = content
+                entrypoint = symbol
 
-            after_hole = True
-
-            prev_call = content
-
-            cells.append(prompt_vars[content])
+            prev_call = symbol
 
         else:
             raise ValueError("Unknown segment type")

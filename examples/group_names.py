@@ -3,9 +3,9 @@ import lloam
 @lloam.prompt(model="gpt-3.5-turbo")
 def group_name(x, n=5):
     """
-    One kind of {x} is a [name].
+    One kind of {x} is a [name:(\.|,)].
 
-    {n} {name}s makes a [group_name].
+    {n} {name}s makes a [group_name:(\.|,)].
     """
 
 
