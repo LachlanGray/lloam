@@ -55,7 +55,7 @@ class Completion:
         self._done_event = threading.Event()
         self._callback_lock = threading.Lock()
 
-        self.stops = set()
+        self.stops = []
         if stop:
             self.add_stop(stop)
 
@@ -97,9 +97,15 @@ class Completion:
 
     def add_stop(self, stop):
         if isinstance(stop, str):
-            self.stops.add(stop)
+            if len(stop) == 1:
+                stop = re.escape(stop)
+
+            self.stops.append(re.compile(stop))
+        elif isinstance(stop, list):
+            for stop in stop:
+                self.add_stop(stop)
         else:
-            self.stops.update(set(stop))
+            raise ValueError("Stop must be a strings (or regexps) or list of strings")
 
     def __str__(self):
         return self.result()
@@ -147,8 +153,9 @@ class Completion:
         prompt = "".join(self.chunks)
         for stop in self.stops:
 
-            if stop in chunk:
-                leading = chunk.find(stop)
+            if stop.match(chunk):
+                match_idx = stop.match(chunk).start()
+                leading = len(chunk[:match_idx])
 
                 if leading > 0:
                     chunk = chunk[:leading]
@@ -158,8 +165,8 @@ class Completion:
                 self.status = CompletionStatus.FINISHED
                 break
 
-            if stop in prompt:
-                trailing = len(prompt) - prompt.rfind(stop)
+            if stop.match(prompt):
+                trailing = len(prompt) - stop.match(prompt).end()
 
                 for _ in range(trailing):
                     self.chunks[-1] = self.chunks[-1][:-1]
