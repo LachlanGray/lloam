@@ -1,14 +1,35 @@
 import threading
 import os
+import time
 
 from .prompt import Prompt
 from .completions import Completion, CompletionStatus
 
 
-lock = threading.Lock()
-
 class Agent:
-    def get_lloam_members(self):
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.logs = []
+
+        self.silent = False
+
+
+    def log(self, message, level="info"):
+        with self.lock:
+            self.logs.append({
+                "level": level,
+                "message": message,
+                "timestamp": time.time()
+            })
+
+            if not self.silent:
+                print(f"[{level}] {message}")
+
+
+    def get_lloam_members(self) -> dict:
+        """
+        Get all the members of the object that are lloam objects (Prompt, Agent, Completion)
+        """
         def is_desired_type(value):
             return isinstance(value, (Prompt, Agent, Completion))
 
@@ -45,102 +66,105 @@ class Agent:
 
         return result
 
-    def format_progress(self):
-        def expand_agents(obj, seen):
-            obj_id = id(obj)
-            if obj_id in seen:
-                return None  # Avoid processing the same object again
-            seen.add(obj_id)
 
-            if isinstance(obj, Agent):
-                obj_members = obj.get_lloam_members()
-                return {key: expand_agents(value, seen) for key, value in obj_members.items()}
-            elif isinstance(obj, list):
-                return [expand_agents(item, seen) for item in obj]
-            elif isinstance(obj, dict):
-                return {k: expand_agents(v, seen) for k, v in obj.items()}
-            else:
-                return obj  # Leave other types unchanged
+    # SOME ARTSY SHITE THAT WON'T WORK RN
+    # 
+    # def format_progress(self):
+    #     def expand_agents(obj, seen):
+    #         obj_id = id(obj)
+    #         if obj_id in seen:
+    #             return None  # Avoid processing the same object again
+    #         seen.add(obj_id)
 
-        seen = set()
-        seen.add(id(self))
-        members = self.get_lloam_members()
-        members = {key: expand_agents(value, seen) for key, value in members.items()}
+    #         if isinstance(obj, Agent):
+    #             obj_members = obj.get_lloam_members()
+    #             return {key: expand_agents(value, seen) for key, value in obj_members.items()}
+    #         elif isinstance(obj, list):
+    #             return [expand_agents(item, seen) for item in obj]
+    #         elif isinstance(obj, dict):
+    #             return {k: expand_agents(v, seen) for k, v in obj.items()}
+    #         else:
+    #             return obj  # Leave other types unchanged
 
-        done = "■"
-        waiting = "□"
+    #     seen = set()
+    #     seen.add(id(self))
+    #     members = self.get_lloam_members()
+    #     members = {key: expand_agents(value, seen) for key, value in members.items()}
 
-        result = []
+    #     done = "■"
+    #     waiting = "□"
 
-        def process_member(kk, vv):
-            if isinstance(vv, dict):
-                result.append(f"[")
-                for k, v in vv.items():
-                    process_member(k, v)
+    #     result = []
 
-                result.append("]")
+    #     def process_member(kk, vv):
+    #         if isinstance(vv, dict):
+    #             result.append(f"[")
+    #             for k, v in vv.items():
+    #                 process_member(k, v)
 
-            elif isinstance(vv, list):
-                result.append("[")
-                for v in vv:
-                    process_member(None, v)
+    #             result.append("]")
 
-                result.append("]")
+    #         elif isinstance(vv, list):
+    #             result.append("[")
+    #             for v in vv:
+    #                 process_member(None, v)
 
-            elif isinstance(vv, Prompt):
-                n_complete, n_waiting = vv.progress()
+    #             result.append("]")
 
-                result.append(n_complete * done)
-                result.append(n_waiting * waiting)
+    #         elif isinstance(vv, Prompt):
+    #             n_complete, n_waiting = vv.progress()
 
-            elif isinstance(vv, Completion):
-                status = vv.status
-                if status == CompletionStatus.FINISHED:
-                    return
-                result.append(f"[{waiting}]")
-            else:
-                return
+    #             result.append(n_complete * done)
+    #             result.append(n_waiting * waiting)
 
-        process_member(None, members)
+    #         elif isinstance(vv, Completion):
+    #             status = vv.status
+    #             if status == CompletionStatus.FINISHED:
+    #                 return
+    #             result.append(f"[{waiting}]")
+    #         else:
+    #             return
 
-        return "".join(result)
+    #     process_member(None, members)
 
-
-    def observe(self):
-
-        stop_event = threading.Event()
-
-        def display_progress():
-            try:
-                while not stop_event.is_set():
-                    # Clear the screen
-                    os.system('cls' if os.name == 'nt' else 'clear')
-
-                    # Get the progress
-                    with lock:
-                        progress = self.format_progress()
-                        print(progress)
-                        print()
-                        print("(Press Enter to end observation)")
-
-                    # Wait for 0.1 seconds or until stop_event is set
-                    stop_event.wait(0.1)
-            except Exception as e:
-                print(f"An error occurred in the observation thread: {e}")
+    #     return "".join(result)
 
 
-        def wait_for_enter():
-            input()  # Wait for Enter key press
-            stop_event.set()  # Set the stop event when Enter is pressed
+    # def observe(self):
 
-        # Start the background thread to display progress
-        observer_thread = threading.Thread(target=display_progress, daemon=True)
-        observer_thread.start()
+    #     stop_event = threading.Event()
 
-        # Start the thread to wait for Enter key press
-        input_thread = threading.Thread(target=wait_for_enter, daemon=True)
-        input_thread.start()
+    #     def display_progress():
+    #         try:
+    #             while not stop_event.is_set():
+    #                 # Clear the screen
+    #                 os.system('cls' if os.name == 'nt' else 'clear')
 
-        return stop_event
+    #                 # Get the progress
+    #                 with self.lock:
+    #                     progress = self.format_progress()
+    #                     print(progress)
+    #                     print()
+    #                     print("(Press Enter to end observation)")
+
+    #                 # Wait for 0.1 seconds or until stop_event is set
+    #                 stop_event.wait(0.1)
+    #         except Exception as e:
+    #             print(f"An error occurred in the observation thread: {e}")
+
+
+    #     def wait_for_enter():
+    #         input()  # Wait for Enter key press
+    #         stop_event.set()  # Set the stop event when Enter is pressed
+
+    #     # Start the background thread to display progress
+    #     observer_thread = threading.Thread(target=display_progress, daemon=True)
+    #     observer_thread.start()
+
+    #     # Start the thread to wait for Enter key press
+    #     input_thread = threading.Thread(target=wait_for_enter, daemon=True)
+    #     input_thread.start()
+
+    #     return stop_event
 
 
