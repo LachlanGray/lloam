@@ -7,8 +7,48 @@ import asyncio
 
 from .completions import Completion, CompletionStatus
 
-
+# google-style docstrings
 def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
+    """
+    Decorator to define a prompt function using a lloam template string.
+
+
+    Parameters
+    ----------
+    f : callable
+        The function to decorate. The function should have a docstring that defines the prompt template.
+    model : str, optional
+        The model to use for completions. Default is "gpt-4o-mini".
+    temperature : float, optional
+        The temperature to use for completions. Default is 0.9.
+
+
+    Returns
+    -------
+    callable
+        A decorated function that returns a Prompt object.
+
+
+    Syntax
+    ------
+    - Variables: {variable_name}
+    - Holes: [hole_name]
+
+    Variables
+    - Variables are substituted into the prompt template like an f-string
+    - Variables can be
+        - positional or keyword arguments
+        - attributes of positional or keyword arguments
+        - the result of previously defined holes
+
+    Holes
+    - Holes are completed by the language model in order
+    - Once completed, the result can be used as a variable
+    - You can define the stopping conditions as a regex using "up until" syntax, e.g.
+
+        [hole_name:regexp]
+
+    """
 
     if f is None:
         def decorator(f):

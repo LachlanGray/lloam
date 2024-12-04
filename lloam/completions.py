@@ -87,6 +87,9 @@ class Completion:
     def start(self):
         if self.prompt is None:
             raise ValueError("Prompt not set")
+
+        # if the completion is a part of a larger prompt, it uses the prompt
+        # up to the point where the completion appears as its prompt.
         if isinstance(self.prompt, list) and isinstance(self.prompt[0], str):
             if self in self.prompt:
                 self.prompt = self.prompt[:self.prompt.index(self)].copy()
@@ -132,6 +135,7 @@ class Completion:
 
                 self._refresh_status(chunk)
 
+                # close generator ASAP to save tokens
                 if self.status == CompletionStatus.FINISHED:
                     await gen.aclose()
                     break
@@ -152,6 +156,9 @@ class Completion:
 
 
     def _refresh_status(self, chunk):
+        # checks if stopping conditions have been met if so,
+        # trim completion to that point and update the status
+
         prompt = "".join(self.chunks)
         for stop in self.stops:
 
