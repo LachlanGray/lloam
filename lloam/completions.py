@@ -10,9 +10,10 @@ from .streaming import stream_chat_completion
 
 class CompletionStatus(Enum):
     PENDING = 0
-    RUNNING = 1
-    FINISHED = 2
-    ERROR = 3
+    RUNNING = 1     # stream in progress
+    FINALIZING = 2  # strop condition met
+    FINISHED = 3
+    ERROR = 4
 
 
 def completion(
@@ -42,7 +43,7 @@ class Completion:
     completions_thread = None
 
 
-    def __init__(self, prompt, stop=None, model="gpt-4o-mini", temperature=0.9):
+    def __init__(self, prompt, stop=None, model="gpt-4o-mini", temperature=0.7):
         super().__init__()
         self.prompt = prompt
         self.status = CompletionStatus.PENDING
@@ -88,8 +89,8 @@ class Completion:
         if self.prompt is None:
             raise ValueError("Prompt not set")
 
-        # if the completion is a part of a larger prompt, it uses the prompt
-        # up to the point where the completion appears as its prompt.
+        # A completion can exist in its own prompt (there's a reason). 
+        # In that case, use proceeding prompts to generate the completion
         if isinstance(self.prompt, list) and isinstance(self.prompt[0], str):
             if self in self.prompt:
                 self.prompt = self.prompt[:self.prompt.index(self)].copy()
@@ -110,7 +111,7 @@ class Completion:
             for stop in stop:
                 self.add_stop(stop)
         else:
-            raise ValueError("Stop must be a strings (or regexps) or list of strings")
+            raise ValueError("Stop must be a strings or list of strings")
 
     def __str__(self):
         return self.result()
@@ -119,7 +120,7 @@ class Completion:
     def visual_status(self):
         if self.status == CompletionStatus.PENDING:
             return "[     ]"
-        elif self.status == CompletionStatus.RUNNING:
+        elif self.status == CompletionStatus.RUNNING or self.status == CompletionStatus.FINALIZING:
             return "[ ... ]"
         elif self.status == CompletionStatus.FINISHED:
             with self._chunks_lock:
@@ -136,18 +137,19 @@ class Completion:
                 self._refresh_status(chunk)
 
                 # close generator ASAP to save tokens
-                if self.status == CompletionStatus.FINISHED:
+                if self.status == CompletionStatus.FINALIZING:
                     await gen.aclose()
                     break
 
                 with self._chunks_lock:
                     self.chunks.append(chunk)
 
-            self.status = CompletionStatus.FINISHED
+            self.status = CompletionStatus.FINALIZING
             with self._chunks_lock:
                 result = "".join(self.chunks)
 
             self.set_result(result)
+            self.status = CompletionStatus.FINISHED
 
 
         except Exception as e:
@@ -171,9 +173,10 @@ class Completion:
                     with self._chunks_lock:
                         self.chunks.append(chunk)
 
-                self.status = CompletionStatus.FINISHED
+                self.status = CompletionStatus.FINALIZING
                 break
 
+            # terrible
             if stop.match(prompt):
                 trailing = len(prompt) - stop.match(prompt).end()
 
@@ -182,17 +185,17 @@ class Completion:
                     if self.chunks[-1] == "":
                         self.chunks.pop(-1)
 
-                self.status = CompletionStatus.FINISHED
+                self.status = CompletionStatus.FINALIZING
                 break
 
-
-    # Future-like methods
     def add_done_callback(self, fn):
         with self._callback_lock:
-            if self._done_event.is_set():
-                fn(self)
-            else:
+            done = self._done_event.is_set()
+            if not done:
                 self._done_callbacks.append(fn)
+
+        if done:
+            fn()
 
     def set_result(self, result):
         self._result = result
@@ -214,13 +217,15 @@ class Completion:
 
     def _invoke_callbacks(self):
         with self._callback_lock:
-            for fn in self._done_callbacks:
-                try:
-                    fn(self)
-                except Exception as e:
-                    raise e
-
+            callbacks = self._done_callbacks
             self._done_callbacks = []
+
+        for fn in callbacks:
+            try:
+                fn()
+            except Exception as e:
+                print(f"Exception in callback: {e}")
+                raise e
 
     def done(self):
         return self._done_event.is_set()
@@ -230,40 +235,4 @@ class Completion:
         self.result()
         return re.findall(pattern, "".join(self.chunks))
 
-    @property
-    def text(self):
-        text = super().result()
-        return text
 
-
-    @property
-    def backticks(self):
-        pattern = r'`(.*?)`'
-        return self.findall(pattern)
-
-
-
-if __name__ == "__main__":
-
-
-    # messages
-    messages = [
-        {"role": "system", "content": "You speak in haikus"},
-        {"role": "user", "content": "What is loam?"}
-    ]
-    loam = completion(messages)
-
-
-    # strings
-    prompt = "Billy Joel said: Sing us a song you're "
-    lyric = completion(prompt, stop=[".", "!", "\n"])
-
-
-    # chunks
-    chunks = ["The capi", "tal of", " France ", "is", " "]
-    capitol = completion(chunks, stop=".")
-
-
-    print(loam.result())
-    print(lyric.result())
-    print(capitol.result())

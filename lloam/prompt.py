@@ -7,8 +7,7 @@ import asyncio
 
 from .completions import Completion, CompletionStatus
 
-# google-style docstrings
-def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
+def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7):
     """
     Decorator to define a prompt function using a lloam template string.
 
@@ -67,7 +66,13 @@ def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
                 args = {k: v for k, v in zip(fn_args, args)}
                 args = {**args, **kwargs}
 
-                return Prompt(f, args, model=model, temperature=temperature)
+                return Prompt(
+                    f,
+                    args,
+                    model=model,
+                    temperature=temperature,
+                    start=True
+                )
 
             return wrapper
 
@@ -89,10 +94,9 @@ def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
         args = {**args, **kwargs}
 
 
-        return Prompt(f, args)
+        return Prompt(f, args,model=model, temperature=temperature, start=True)
 
     return wrapper
-
 
 
 def preprocess(f: callable):
@@ -171,14 +175,27 @@ def parse_prompt(text):
     return result
 
 
-def compile_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
+def compile_prompt(parsed_prompt: list[tuple[PromptSegment, str]], args, model="gpt-4o-mini", temperature=0.7):
+    """
+    Prompt is parsed into a list of "cells".
+
+    A cell is either body text, or symbols.
+
+    A piece of data may be a Completion object.
+
+    An implicit dependency graph is assembled between the 
+    Completion objects. This should be explicit.
+
+
+
+    """
     prompt_vars = {**args}
     cells = []
     entrypoint = None
 
     prev_call = None
-    after_hole = False
-    for segment_type, symbol in parse_prompt(prompt_src):
+
+    for segment_type, symbol in parsed_prompt:
 
         if segment_type == PromptSegment.BODY:
             cells.append(symbol)
@@ -187,25 +204,32 @@ def compile_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
             if symbol in prompt_vars:
                 if isinstance(prompt_vars[symbol], Prompt):
                     cells.append(prompt_vars[symbol].result())
+                elif isinstance(prompt_vars[symbol], Completion):
+                    cells.append(prompt_vars[symbol].result())
                 else:
                     cells.append(prompt_vars[symbol])
 
             elif "." in symbol:
                 obj_name, *attributes = symbol.split(".")
+                assert obj_name in prompt_vars, f"No symbol {obj_name} in prompt_vars"
+
                 obj = prompt_vars[obj_name]
 
                 nested_result = obj
                 for attribute in attributes:
                     nested_result = getattr(nested_result, attribute)
 
-                cells.append(nested_result)
+                if isinstance(nested_result, Completion):
+                    cells.append(nested_result.result())
+                else:
+                    cells.append(str(nested_result))
 
             else:
                 raise ValueError(f"Variable {symbol} used before definition")
 
         elif segment_type == PromptSegment.HOLE:
             if symbol in prompt_vars:
-                raise ValueError(f"Variable {symbol} already defined")
+                raise ValueError(f"Variable name {symbol} already defined as variable, can't redefine as hole.")
 
             stop = None
             if ":" in symbol:
@@ -221,8 +245,7 @@ def compile_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
             prompt_vars[symbol] = completion
 
             if prev_call:
-                # TODO: us Prompt/Completion/Agent start() method
-                prompt_vars[prev_call].add_done_callback(lambda fut, content=symbol: prompt_vars[content].start())
+                prompt_vars[prev_call].add_done_callback(prompt_vars[symbol].start)
             else:
                 entrypoint = symbol
 
@@ -231,20 +254,32 @@ def compile_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
         else:
             raise ValueError("Unknown segment type")
 
+    exitpoint = prev_call
 
-    return cells, prompt_vars, entrypoint
+    return cells, prompt_vars, entrypoint, exitpoint
 
 
 class Prompt:
-    def __init__(self, f, args, model="gpt-4o-mini", temperature=0.9):
+    def __init__(self, f, args, model="gpt-4o-mini", temperature=0.7, start=False):
         self.prompt_src = preprocess(f)
-        self.cells, self.prompt_vars, entrypoint = compile_prompt(self.prompt_src, args, model=model, temperature=temperature)
+        self.parsed_prompt = parse_prompt(self.prompt_src)
+        self.cells, self.prompt_vars, entrypoint, exitpoint = compile_prompt(self.parsed_prompt, args, model=model, temperature=temperature)
+        self.entrypoint = entrypoint
+        self.exitpoint = exitpoint
 
-        self.prompt_vars[entrypoint].start()
+        if start:
+            self.start()
+
+    def start(self):
+        self.prompt_vars[self.entrypoint].start()
 
     def __getattr__(self, name):
         if name in self.prompt_vars:
-            return self.prompt_vars[name].result()
+            var = self.prompt_vars[name]
+            if isinstance(var, Completion):
+                return var.result()
+
+            return var
         else:
             raise AttributeError(f"Prompt has no attribute {name}")
 
@@ -257,7 +292,6 @@ class Prompt:
     async def _check_completion(self):
         completions = [var for var in self.prompt_vars.values() if isinstance(var, Completion)]
         while not all(var.status == CompletionStatus.FINISHED for var in completions):
-            # Yield control back to the event loop for a while before rechecking
             await asyncio.sleep(0.1)
         return True
 
