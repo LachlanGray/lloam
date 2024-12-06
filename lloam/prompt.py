@@ -176,19 +176,6 @@ def parse_prompt(text):
 
 
 def compile_prompt(parsed_prompt: list[tuple[PromptSegment, str]], args, model="gpt-4o-mini", temperature=0.7):
-    """
-    Prompt is parsed into a list of "cells".
-
-    A cell is either body text, or symbols.
-
-    A piece of data may be a Completion object.
-
-    An implicit dependency graph is assembled between the 
-    Completion objects. This should be explicit.
-
-
-
-    """
     prompt_vars = {**args}
     cells = []
     entrypoint = None
@@ -276,9 +263,6 @@ class Prompt:
     def __getattr__(self, name):
         if name in self.prompt_vars:
             var = self.prompt_vars[name]
-            if isinstance(var, Completion):
-                return var.result()
-
             return var
         else:
             raise AttributeError(f"Prompt has no attribute {name}")
@@ -294,27 +278,6 @@ class Prompt:
         while not all(var.status == CompletionStatus.FINISHED for var in completions):
             await asyncio.sleep(0.1)
         return True
-
-
-    def inspect(self):
-        chunks = []
-        for cell in self.cells:
-            if isinstance(cell, Completion):
-                chunks.append(cell.visual_status())
-            else:
-                chunks.append(str(cell))
-
-        return "".join(chunks)
-
-
-
-    def progress(self):
-        n_completions = sum(1 for var in self.prompt_vars.values() if isinstance(var, Completion))
-        n_completed = sum(1 for var in self.prompt_vars.values() if isinstance(var, Completion) and var.status == CompletionStatus.FINISHED)
-
-        n_waiting = n_completions - n_completed
-
-        return n_completed, n_waiting
 
 
 if __name__ == "__main__":

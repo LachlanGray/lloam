@@ -91,14 +91,42 @@ class Completion:
 
         # A completion can exist in its own prompt (there's a reason). 
         # In that case, use proceeding prompts to generate the completion
-        if isinstance(self.prompt, list) and isinstance(self.prompt[0], str):
+        if isinstance(self.prompt, list):
             if self in self.prompt:
                 self.prompt = self.prompt[:self.prompt.index(self)].copy()
 
-            self.prompt = "".join([str(x) for x in self.prompt])
+            any_dicts = any(isinstance(p, dict) for p in self.prompt)
+            all_dicts = all(isinstance(p, dict) for p in self.prompt)
+            are_messages = all("role" in p for p in self.prompt if isinstance(p, dict))
+
+            if any_dicts and are_messages:
+                self.prompt = [
+                    {"role":"user", "content":p} if not isinstance(p, dict) 
+                    else p
+                    for p in self.prompt 
+                ]
+
+            elif any_dicts and not are_messages:
+                self.prompt = [
+                    p["content"] if isinstance(p, dict) 
+                    else p
+                    for p in self.prompt 
+                ]
+
+            else:
+                self.prompt = "".join([str(x) for x in self.prompt])
 
         self.status = CompletionStatus.RUNNING
         asyncio.run_coroutine_threadsafe(self._run_generator(), self.completions_loop)
+
+
+    def stream(self):
+        stream_index = 0
+
+        while self.status != CompletionStatus.FINISHED:
+            if stream_index < len(self.chunks):
+                yield self.chunks[stream_index]
+                stream_index += 1
 
 
     def add_stop(self, stop):
