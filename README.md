@@ -18,102 +18,105 @@ Overview: [completions](#lloam-completions), [prompts](#lloam-prompts), [agents]
 
 ### Lloam Completions
 
-`lloam.completion` is a simple and familiar way to generate completions. It returns a `Completion` object, which manages the token stream.  Tokens are accumulated concurrently, meaning completions won't block your program until you acess their results (e.g. with `str()` or `print()`).
+`lloam.completion` is a simple and familiar way to generate completions. It returns a `Completion` object which is essentially a wrapper around a token stream. Tokens are streamed concurrently, so the completion won't block your program, 
 
+
+**Concurrent:** When you create `Completion` objects, token streams are parallelized automatically and don't block until you call `.result()`
 ```python
-from lloam import completion
+import lloam
+
+answer_1 = lloam.completion("What's the meaning of life?")
+answer_2 = lloam.completion("How many minutes to hard boil an egg?")
+answer_3 = lloam.completion("Who is the piano man?")
+
+print("This runs immediately!")
+print("The completions are running...")
+print("We can wait for a completion with `.result()`")
+
+print(answer_2.result())
+print(answer_3.result())
+print(answer_1.result())
+
+```
 
 
-# strings
-prompt = "Snap, crackle, and"
-who = completion(prompt, stop="!", model="gpt-3.5-turbo")
-
-# lists
-chunks = ["The capi", "tal of", " France ", "is", "?"]
-capitol = completion(chunks, stop=[".", "!"])
-
+**Streaming:** You can use `.stream()` to get a generator of the token stream
+```python
 messages = [
     {"role": "system", "content": "You answer questions in haikus"},
     {"role": "user", "content": "What's loam"}
 ]
-poem = completion(messages)
 
-# ...completions are running concurrently...
+poem = lloam.completion(messages)
 
-print(who)     # pop
-print(capitol) # The capital of France is Paris
-print(poem)    # Soil rich and robust,
-               # A blend of clay, sand, and silt,
-               # Perfect for planting.
+for tok in poem.stream():
+    print(tok, end="")
+
+# Soil rich and robust,           
+# A blend of clay, sand, and silt,                       
+# Perfect for planting.                                  
 ```
 
+**Stopping conditions:** You can specify stopping conditions with either a regexp string or list of regexp strings
+```python
+
+# stops on . or !
+one_sentence = lloam.completion("Tell me about owls", stop=["\.", "!"])
+
+# terminates when a double digit is listed
+numbers = lloam.completion("Name random numbers", stop=r"\b\d{2}\b
+")
+
+```
+
+
+
 ### Lloam Prompts
-Lloam prompts offer a clean templating syntax you can use to write more complex prompts inline. The language model fills the `[holes]`, while `{variables}` are substituted into the prompt. Lloam prompts run concurrently just like completions, under the hood they are managing a sequence of Completions.
+Lloam prompts offer a clean templating syntax for writing more complex prompts. `[holes]` are filled in my the language model, and `{variables}` are substituted into the prompt like f-strings. The resulting function returns a `Prompt` object, which is essentially a chain of `Completion` objects. You can access variables and holes as members of the returned `Prompt` object.
+
+- **Postitional and keyword args:** A prompt function supports both positional and keyword args.
+- **Hyperparameters:** You can set the model and temperature in the decorator
+- **Stopping conditions:** You can specify the stopping conditions of a hole using "up to" array notation and a regexp; `[hole:(rexexp)]` will terminate the completion when the regexp is matched
+
 
 ```python
 import lloam
 
-@lloam.prompt(model="gpt-3.5-turbo")
-def group_name(x, n=5):
+@lloam.prompt(model="gpt-3.5-turbo", temperature=0.9)
+def storytime(x, n=5):
     """
-    One kind of {x} is a [name].
+    One kind of {x} is a [name:\.].
 
-    {n} {name}s makes a [group_name].
+    {n} {name}s makes a [group:\.].
+
+    Here's a story about the {group},
+    and its {n} {name}s.
+
+    [story]
     """
 
+pets = storytime("domestic animal")
 
-animal = group_name("domestic animal")
-print("This prints immediately!")
+print(f"A story about a {pets.group.result()} of {pets.name.result()}s")
+# A story about a clowder of cats
 
-# access variables later
-print(animal.name)           # dog
-print(animal.group_name)     # pack
-```
-
-You can also inspect the live state of a prompt with `.inspect()`:
-
-```python
-musician_type = group_name("musician", n=3)
-
-import time
-for _ in range(3):
-    print(musician_type.inspect())
-    print("---")
-    time.sleep(0.5)
-
-print(musician_type.name)
-print(musician_type.group_name)
-
-# output:
-
-# One kind of musician is a [ ... ].
-
-# 3 [ ... ]s makes a [     ].
-# ---
-# One kind of musician is a singer-songwriter.
-
-# 3 singer-songwriters makes a [ ... ].
-# ---
-# One kind of musician is a singer-songwriter.
-
-# 3 singer-songwriters makes a trio.
-# ---
-# singer-songwriter
-# trio
+for tok in pets.story.stream()
+    print(tok, end="")
 ```
 
 ### Lloam Agents
-Lloam encourages you to think of an agent as a datastructure around language. Here's how you could make a RAG Agent that has 
-- a chat history
-- a database
-- a context for retrieved artifacts
+For a real example of a `lloam` agent, check out [Dixie](https://github.com/LachlanGray/dixie)!
 
-You can see another example in `examples/shell_agent.py`. More stuff on agents coming soon!
+Lloam conceptualizes an agent as a datastructure around language. A `lloam.prompt` function can be a class method and access data directly, making the agent prompts very transparent to read in code.
+
+The main benefit of `lloam.Agent` is that it comes with a versatile `self.log()` method which can be monitored from another thread for control or debugging purposes.
+
+Here's a sketch of a RAG agent that uses a database to maintain a chat history, retrieved artifacts, and yield followup questions.
 
 ```python
 import lloam
 
-class RagAgent:
+class RagAgent(lloam.Agent):
     def __init__(self, db):
         self.db = db
         self.history = []
@@ -122,8 +125,15 @@ class RagAgent:
     def ask(self, question):
         self.history.append({"role": "user", "content": question})
 
+        self.log(f"Making query: {question}")
         results = self.db.query(question)
         self.artifacts.update(results)
+
+        n_docs = len(results)
+        if n_docs > 0:
+            self.log(f"Retrieved {n_docs} documents for: {query}")
+        else:
+            self.log(f"No documents for: {query}", level="warning")
 
         answer = self.answer(question)
 

@@ -99,18 +99,12 @@ class Completion:
             all_dicts = all(isinstance(p, dict) for p in self.prompt)
             are_messages = all("role" in p for p in self.prompt if isinstance(p, dict))
 
+            # if prompt is mixture of oai messages and strings, strings are cast to user messages
             if any_dicts and are_messages:
                 self.prompt = [
                     {"role":"user", "content":p} if not isinstance(p, dict) 
                     else p
-                    for p in self.prompt 
-                ]
-
-            elif any_dicts and not are_messages:
-                self.prompt = [
-                    p["content"] if isinstance(p, dict) 
-                    else p
-                    for p in self.prompt 
+                    for p in self.prompt
                 ]
 
             else:
