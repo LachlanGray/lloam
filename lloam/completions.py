@@ -139,16 +139,6 @@ class Completion:
         return self.result()
 
 
-    def visual_status(self):
-        if self.status == CompletionStatus.PENDING:
-            return "[     ]"
-        elif self.status == CompletionStatus.RUNNING or self.status == CompletionStatus.FINALIZING:
-            return "[ ... ]"
-        elif self.status == CompletionStatus.FINISHED:
-            with self._chunks_lock:
-                return "".join(self.chunks)
-
-
     async def _run_generator(self):
         gen = self._async_gen_func(
             self.prompt, model=self.model, temperature=self.temperature
@@ -198,7 +188,8 @@ class Completion:
                 self.status = CompletionStatus.FINALIZING
                 break
 
-            # terrible
+            # terrible:
+            # once stopping condition is in prompt, match up to that point.
             if stop.match(prompt):
                 trailing = len(prompt) - stop.match(prompt).end()
 
