@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from concurrent.futures import Future
+from queue import Queue
 from enum import Enum
 import re
 
@@ -32,7 +32,6 @@ def completion(
     completion.start()
     return completion
 
-# TODO: Rename to RunningCompletion, have it return Completion which inherits from str
 
 class Completion:
     """
@@ -123,15 +122,21 @@ class Completion:
                 stream_index += 1
 
 
-    def add_stop(self, stop):
-        if isinstance(stop, str):
-            if len(stop) == 1:
-                stop = re.escape(stop)
-
-            self.stops.append(re.compile(stop))
-        elif isinstance(stop, list):
+    def add_stop(self, stop, regex=False):
+        """
+        :param stop: A string or list of strings to stop completion
+        :param regex: If True, stop is treated as a regex
+        """
+        if isinstance(stop, list):
             for stop in stop:
                 self.add_stop(stop)
+
+        elif isinstance(stop, str):
+            if regex:
+                self.stops.append(stop)
+            else:
+                self.stops.append(re.escape(stop))
+
         else:
             raise ValueError("Stop must be a strings or list of strings")
 
