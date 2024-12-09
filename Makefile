@@ -1,13 +1,18 @@
 
 venv: clean
 	python -m venv venv
-	. venv/bin/activate && pip install setuptools wheel twine
+	. venv/bin/activate && pip install setuptools wheel twine pytest
 	. venv/bin/activate && pip install -e .
 
 
 .PHONY: build
 build: venv
 	python setup.py sdist bdist_wheel
+
+
+.PHONY: tests
+tests:
+	. venv/bin/activate && pytest
 
 
 .PHONY: deploy
