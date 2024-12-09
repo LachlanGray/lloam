@@ -18,17 +18,30 @@ class CompletionStatus(Enum):
 
 def completion(
     prompt: Union[str, List[str], List[Dict[str, str]]],
-    stop: Optional[str|List[str]] = None,
-    model: str = "gpt-4o-mini"
+    model: str = "gpt-4o-mini",
+    stops: Optional[List[str]] = None,
+    regex_stops: Optional[List[str]] = None,
+    include_stops: bool = False
 ):
     """
+    Generates a completion using a language model.
+
     :param prompt: A string, openai-style chat list, or list of strings
-    :param stop: A stopping string, or list of stopping strings
+    :param model: Which model to use (only openai models supported; changing soon)
+    :param stops: A list of strings that will terminate the completion early
+    :param regex_stops: A list of rexexp strings that will terminate the completion early
+    :param include_stops: Whether characters that trigger a stopping condition should go in the final result
 
     :return: A Completion object
     """
 
-    completion = Completion(prompt, stop)
+    completion = Completion(prompt, stops)
+
+    for stop in stops:
+        completion.add_stop(stop)
+    for stop in regex_stops:
+        completion.add_stop(stop, regex=True)
+
     completion.start()
     return completion
 
@@ -45,10 +58,7 @@ class Completion:
     def __init__(
             self,
             prompt,
-            include_starts=True,
-            include_stops=True,
-            stop=None,
-            start=None,
+            include_stops=False,
             model="gpt-4o-mini",
             temperature=0.7
     ):
@@ -64,11 +74,8 @@ class Completion:
         self._done_event = threading.Event()
         self._callback_lock = threading.Lock()
 
-        self.include_starts = include_starts # TODO: implement this logic
-        self.include_stops = include_stops
         self.stops = []
-        if stop:
-            self.add_stop(stop)
+        self.include_stops = include_stops
 
         self._async_gen_func = stream_chat_completion
         self.chunks = []

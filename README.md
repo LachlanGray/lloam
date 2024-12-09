@@ -57,15 +57,18 @@ for tok in poem.stream():
 # Perfect for planting.                                  
 ```
 
-**Stopping conditions:** You can specify stopping conditions with either a regexp string or list of regexp strings
+**Stopping conditions:** You can specify stopping conditions with strings and/or regexps
 ```python
 
-# stops on . or !
-one_sentence = lloam.completion("Tell me about owls", stop=["\.", "!"])
+# completion will terminate before "." or "!"
+one_sentence = lloam.completion("Tell me about owls", stops=[".", "!"])
 
-# terminates when a double digit is listed
-numbers = lloam.completion("Name random numbers", stop=r"\b\d{2}\b
-")
+# terminates after closing code block
+numbers = lloam.completion(
+    "Please write some python, open code blocks with ```python",
+    regex_stops=[r"```\s+"],
+    include_stops=True
+)
 
 ```
 
