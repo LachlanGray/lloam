@@ -42,7 +42,16 @@ class Completion:
     completions_thread = None
 
 
-    def __init__(self, prompt, stop=None, model="gpt-4o-mini", temperature=0.7):
+    def __init__(
+            self,
+            prompt,
+            include_starts=True,
+            include_stops=True,
+            stop=None,
+            start=None,
+            model="gpt-4o-mini",
+            temperature=0.7
+    ):
         super().__init__()
         self.prompt = prompt
         self.status = CompletionStatus.PENDING
@@ -55,6 +64,8 @@ class Completion:
         self._done_event = threading.Event()
         self._callback_lock = threading.Lock()
 
+        self.include_starts = include_starts # TODO: implement this logic
+        self.include_stops = include_stops
         self.stops = []
         if stop:
             self.add_stop(stop)
@@ -114,6 +125,9 @@ class Completion:
 
 
     def stream(self):
+        """
+        :return: A generator that yields completion chunks as they are generated
+        """
         stream_index = 0
 
         while self.status != CompletionStatus.FINISHED:
@@ -132,10 +146,10 @@ class Completion:
                 self.add_stop(stop)
 
         elif isinstance(stop, str):
-            if regex:
-                self.stops.append(stop)
-            else:
-                self.stops.append(re.escape(stop))
+            if not regex:
+                stop = re.escape(stop)
+
+            self.stops.append(re.compile(stop))
 
         else:
             raise ValueError("Stop must be a strings or list of strings")
@@ -158,8 +172,6 @@ class Completion:
                     await gen.aclose()
                     break
 
-                with self._chunks_lock:
-                    self.chunks.append(chunk)
 
             self.status = CompletionStatus.FINALIZING
             with self._chunks_lock:
@@ -178,33 +190,34 @@ class Completion:
         # checks if stopping conditions have been met if so,
         # trim completion to that point and update the status
 
+        with self._chunks_lock:
+            self.chunks.append(chunk)
+
         prompt = "".join(self.chunks)
         for stop in self.stops:
+            matched = stop.search(prompt)
 
-            if stop.match(chunk):
-                match_idx = stop.match(chunk).start()
-                leading = len(chunk[:match_idx])
-
-                if leading > 0:
-                    chunk = chunk[:leading]
-                    with self._chunks_lock:
-                        self.chunks.append(chunk)
-
+            if matched:
                 self.status = CompletionStatus.FINALIZING
+
+                start, end = matched.start(), matched.end()
+
+                if self.include_stops:
+                    to_remove = len(prompt[end:])
+                else:
+                    to_remove = len(prompt[start:])
+
+                with self._chunks_lock:
+                    while to_remove > 0:
+                        if self.chunks[-1] == "":
+                            self.chunks.pop()
+
+                        self.chunks[-1] = self.chunks[-1][:-1]
+
+                        to_remove -= 1
+
                 break
 
-            # terrible:
-            # once stopping condition is in prompt, match up to that point.
-            if stop.match(prompt):
-                trailing = len(prompt) - stop.match(prompt).end()
-
-                for _ in range(trailing):
-                    self.chunks[-1] = self.chunks[-1][:-1]
-                    if self.chunks[-1] == "":
-                        self.chunks.pop(-1)
-
-                self.status = CompletionStatus.FINALIZING
-                break
 
     def add_done_callback(self, fn):
         with self._callback_lock:
