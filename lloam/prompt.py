@@ -218,18 +218,20 @@ def compile_prompt(parsed_prompt: list[tuple[PromptSegment, str]], args, model="
             if symbol in prompt_vars:
                 raise ValueError(f"Variable name {symbol} already defined as variable, can't redefine as hole.")
 
+            compl = Completion(
+                cells, model=model, temperature=temperature
+            )
+
             stop = None
             if ":" in symbol:
                 symbol, regexp = symbol.split(":")
                 symbol = symbol.strip()
                 stop = regexp.strip()
 
-            completion = Completion(
-                cells, stop=stop, model=model, temperature=temperature
-            )
+                compl.add_stop(stop)
 
-            cells.append(completion)
-            prompt_vars[symbol] = completion
+            cells.append(compl)
+            prompt_vars[symbol] = compl
 
             if prev_call:
                 prompt_vars[prev_call].add_done_callback(prompt_vars[symbol].start)
