@@ -19,8 +19,8 @@ class CompletionStatus(Enum):
 def completion(
     prompt: Union[str, List[str], List[Dict[str, str]]],
     model: str = "gpt-4o-mini",
-    stops: Optional[List[str]] = None,
-    regex_stops: Optional[List[str]] = None,
+    stops: Optional[List[str]] = [],
+    regex_stops: Optional[List[str]] = [],
     include_stops: bool = False
 ):
     """
@@ -141,6 +141,17 @@ class Completion:
             if stream_index < len(self.chunks):
                 yield self.chunks[stream_index]
                 stream_index += 1
+
+
+    async def astream(self, period=0.1):
+        stream_index = 0
+
+        while self.status != CompletionStatus.FINISHED:
+            if stream_index < len(self.chunks):
+                yield self.chunks[stream_index]
+                stream_index += 1
+
+            await asyncio.sleep(period)
 
 
     def add_stop(self, stop, regex=False):
