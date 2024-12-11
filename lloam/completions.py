@@ -19,8 +19,8 @@ class CompletionStatus(Enum):
 def completion(
     prompt: Union[str, List[str], List[Dict[str, str]]],
     model: str = "gpt-4o-mini",
-    stops: Optional[List[str]] = None,
-    regex_stops: Optional[List[str]] = None,
+    stops: Optional[List[str]] = [],
+    regex_stops: Optional[List[str]] = [],
     include_stops: bool = False
 ):
     """
