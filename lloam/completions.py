@@ -81,6 +81,8 @@ class Completion:
         self.chunks = []
         self._chunks_lock = threading.Lock()
 
+        self.stream_q = Queue()
+
         self._initialize_event_loop_in_thread()
 
 
@@ -135,23 +137,26 @@ class Completion:
         """
         :return: A generator that yields completion chunks as they are generated
         """
-        stream_index = 0
+        while True:
+            chunk = self.stream_q.get()
 
-        while self.status != CompletionStatus.FINISHED:
-            if stream_index < len(self.chunks):
-                yield self.chunks[stream_index]
-                stream_index += 1
+            if chunk is None:
+                break
 
+            yield chunk
 
     async def astream(self, period=0.1):
-        stream_index = 0
+        while True:
+            if self.stream_q.empty():
+                await asyncio.sleep(period)
 
-        while self.status != CompletionStatus.FINISHED:
-            if stream_index < len(self.chunks):
-                yield self.chunks[stream_index]
-                stream_index += 1
+            chunk = self.stream_q.get()
 
-            await asyncio.sleep(period)
+
+            if chunk is None:
+                break
+
+            yield chunk
 
 
     def add_stop(self, stop, regex=False):
@@ -195,6 +200,8 @@ class Completion:
             with self._chunks_lock:
                 result = "".join(self.chunks)
 
+            self.stream_q.put(None)
+
             self.set_result(result)
             self.status = CompletionStatus.FINISHED
 
@@ -208,10 +215,11 @@ class Completion:
         # checks if stopping conditions have been met if so,
         # trim completion to that point and update the status
 
-        with self._chunks_lock:
-            self.chunks.append(chunk)
+        # with self._chunks_lock:
+        #     self.chunks.append(chunk)
+        new_chunk = chunk
 
-        prompt = "".join(self.chunks)
+        prompt = "".join(self.chunks + [chunk])
         for stop in self.stops:
             matched = stop.search(prompt)
 
@@ -227,15 +235,23 @@ class Completion:
 
                 with self._chunks_lock:
                     while to_remove > 0:
-                        if self.chunks[-1] == "":
-                            self.chunks.pop()
+                        if new_chunk == "":
+                            if self.chunks[-1] == "":
+                                self.chunks.pop()
 
-                        self.chunks[-1] = self.chunks[-1][:-1]
+                            self.chunks[-1] = self.chunks[-1][:-1]
+
+                        new_chunk = new_chunk[:-1]
 
                         to_remove -= 1
 
+                    self.stream_q.put(new_chunk)
+                    self.stream_q.put(None)         # sentinel
+
                 break
 
+        self.chunks.append(new_chunk)
+        self.stream_q.put(new_chunk)
 
     def add_done_callback(self, fn):
         with self._callback_lock:
