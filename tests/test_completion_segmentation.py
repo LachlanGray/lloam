@@ -6,7 +6,7 @@ import pytest
 from tests.utils import tokens_and_generator
 
 
-# @pytest.fixture
+@pytest.fixture
 def html_completion():
     name = "html_completion"
     prompt = "Could you write me a hello world blog post for an html template?"
@@ -24,7 +24,7 @@ def test_nested_pairs(html_completion):
 
     segmentation = Segmentation(compl)
 
-    segmentation.add_pair("code_block", r"```\S*", "```", regex=True)
+    segmentation.add_pair("code_block", r"```[^\n]*(?=\n)", "```", regex=True)
     segmentation.add_pair("head", "<head>", "</head>", regex=False)
     segmentation.add_pair("body", "<body>", "</body>", regex=False)
     segmentation.add_pair("main", "<main>", "</main>", regex=False)
@@ -59,4 +59,3 @@ if __name__ == "__main__":
     print(len(segmentation.segment_types))
 
     print("done")
-    breakpoint()

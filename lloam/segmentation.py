@@ -20,8 +20,6 @@ class SegmentOpen:
 class SegmentClose:
     segment_open: SegmentOpen
 
-
-
 class Segmentation:
     def __init__(self, completion:Completion, allow_nesting=True):
         self.completion = completion
@@ -55,65 +53,46 @@ class Segmentation:
         async for tok in self.completion.astream():
             self.segments[-1] += tok
 
-            matched = False
-
-            # if a pattern is waiting to close
-            if not close_q == []:
-                matched = close_q[-1].search(self.segments[-1])
-
-            if matched:
-                _ = close_q.pop()
-                segment_open = open_q.pop()
-
-                start, end = matched.start(), matched.end()
-
-                chars = self.segments.pop()
-
-                self.segments[-1] += chars[:start]
-
-                self._add_segment(SegmentClose(segment_open))
-                self.segments[-1] += chars[start:end]
-
-                self._add_segment(segment_open.prev_segment)
-
-                # self.segments.append(chars[end:])
-                self.segments[-1] += chars[end:]
-
-                continue
-
-            if not self.allow_nesting and len(open_q) > 1:
-                continue
-
-            for pair_type, pair in self.pairs.items():
+            for segment_type, pair in self.pairs.items():
                 opening, ending = pair
-                close_q.append(ending)
 
-                matched = opening.search(self.segments[-1])
-                if matched:
-                    start, end = matched.start(), matched.end()
-
+                open_match = opening.search(self.segments[-1])
+                if open_match:
+                    start, end = open_match.start(), open_match.end()
                     chars = self.segments.pop()
 
-                    if len(self.segments) == 0:
-                        self.segments.append(chars[:start])
-                    else:
-                        self.segments[-1] += chars[:start]
+                    self.segments.append(chars[:start])
 
-                    segment = Segment(pair_type)
-                    segment_open = SegmentOpen(segment, open_q[-1].segment)
-
-                    self._add_segment(segment_open)
-                    self.segments[-1] += chars[start:end]
-                    open_q.append(segment_open)
-
+                    segment = Segment(segment_type)
+                    open_segment = SegmentOpen(segment, open_q[-1].segment)
+                    self._add_segment(open_segment)
+                    self.segments[-1] += (chars[start:end])
                     self._add_segment(segment)
-                    self.segments.append(chars[end:])
+                    self.segments[-1] += (chars[end:])
+
+                    open_q.append(open_segment)
+                    close_q.append(ending)
 
                     break
 
-            if matched:
-                continue
 
+            if len(close_q) > 1:
+                close_match = close_q[-1].search(self.segments[-1])
+            else:
+                close_match = False
+
+            if close_match:
+                segment_open = open_q.pop()
+                _ = close_q.pop()
+                start, end = close_match.start(), close_match.end()
+                chars = self.segments.pop()
+
+                self.segments.append(chars[:start])
+
+                self._add_segment(SegmentClose(segment_open))
+                self.segments[-1] += chars[start:end]
+                self._add_segment(segment_open.prev_segment)
+                self.segments[-1] += chars[end:]
 
 
     def add_pair(self, name, open_pattern, close_pattern, regex=False):
@@ -123,7 +102,5 @@ class Segmentation:
             close_pattern = re.escape(close_pattern)
 
         self.pairs[name] = (re.compile(open_pattern), re.compile(close_pattern))
-
-
 
 
