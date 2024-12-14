@@ -5,7 +5,6 @@ import re
 import asyncio
 
 
-
 @dataclass
 class Segment:
     segment_type: str | None
@@ -15,10 +14,10 @@ class SegmentOpen:
     segment: Segment
     prev_segment: Segment | None
 
-
 @dataclass
 class SegmentClose:
     segment_open: SegmentOpen
+
 
 class Segmentation:
     def __init__(self, completion:Completion, allow_nesting=True):
@@ -32,16 +31,14 @@ class Segmentation:
 
 
     def start(self):
-        # asyncio.run_coroutine_threadsafe(self._filter(), self.completion.completions_loop)
         self.completion.start()
-        asyncio.run(self._filter())
+        asyncio.run_coroutine_threadsafe(self._filter(), self.completion.completions_loop)
 
     def result(self):
         self.completion.result()
         return self.segments
 
     def _add_segment(self, segment_type):
-        # self.segments.append([])
         self.segments.append("")
         self.segment_types.append(segment_type)
 
