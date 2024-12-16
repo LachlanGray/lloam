@@ -4,6 +4,7 @@ import re
 from enum import Enum
 from concurrent.futures import Future
 import asyncio
+from dataclasses import dataclass
 
 from .completions import Completion, CompletionStatus
 
@@ -99,12 +100,13 @@ def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7):
     return wrapper
 
 
-def preprocess(f: callable):
+def preprocess(f: callable, deco_fn=True):
     src = inspect.getsource(f)
     src = textwrap.dedent(src)
 
     lines = src.split("\n")
-    deco = lines.pop(0)
+    if deco_fn:
+        deco = lines.pop(0)
     fn_def = lines.pop(0)
 
     prompt_src = textwrap.dedent("\n".join(lines)).rstrip()
@@ -133,6 +135,26 @@ class PromptSegment(Enum):
     BODY = "body"
 
 
+class Hole:
+    def __init__(self):
+        self.start_pattern: str|None = None
+        self.name: str               = None
+        self.end_pattern: str|None   = None
+        self.parents: list           = []
+        self.children: list          = []
+
+
+
+class Variable:
+    def __init(self):
+        self.name:str                = None
+
+class Body:
+    def __init(self):
+        self.content:str             = None
+
+
+
 def parse_prompt(text):
     # Define patterns for escaped characters
     escape_pattern = re.compile(r'\\.')
@@ -148,11 +170,96 @@ def parse_prompt(text):
     # Replace escaped braces and brackets with placeholders
     text = escape_pattern.sub(replace_escaped, text)
 
-    # Pattern to match unescaped {.*?} and [.*?]
-    pattern = re.compile(r'(\{.*?\}|\[.*?\])')
+    stack = []
+    prompt = []
+    prompt_holes = {}
+    prompt_vars = {}
 
-    # Split the text around the unescaped braces/brackets
-    segments = pattern.split(text)
+    buffer = ""
+    hole = Hole()
+    variable = Variable()
+    body = Body()
+
+    for ch in text:
+
+        if ch == "[":
+            if len(stack) == 0:
+                # opening new hole
+                body.content = buffer
+                prompt.append(body)
+                body = Body()
+            elif len(stack) == 1:
+                # had outer condition
+                hole.start_pattern = buffer
+            else:
+                assert False, f"hole syntax error:\n{buffer}"
+
+            buffer = ""
+            stack.append("]")
+            continue
+
+        elif ch == "{":
+            if len(stack) == 0:
+                body.content = buffer
+                prompt.append(body)
+                body = Body()
+            else:
+                assert False, f"variable syntax error:\n{buffer}"
+
+            buffer = ""
+            stack.append("}")
+            continue
+
+        else:
+            pass
+
+
+        if len(stack) > 0 and ch == stack[-1]:
+            stack.pop()
+
+            if ch == "]":
+                if len(stack) == 0:
+                    # finalize hole
+                    if hole.name is None:
+                        # no outer condition
+                        hole.name = buffer
+                    else:
+                        # has outer conditions
+                        hole.end_pattern = buffer
+
+                    new_hole = Hole()
+                    new_hole.parents.append(hole)
+                    hole.children.append(new_hole)
+
+                    assert hole.name not in prompt_holes, f"hole name {hole.name} already taken"
+
+                    prompt_holes[hole.name] = hole
+                    prompt.append(hole)
+
+                    hole = new_hole
+
+                elif len(stack) == 1:
+                    # in inner portion; name hole
+                    hole.name = buffer
+
+            elif ch == "}":
+                # define used variable
+                variable.name = buffer
+                prompt_vars[variable.name] = None
+                prompt.append(variable)
+                variable = Variable()
+
+            buffer = ""
+
+        else:
+            buffer += ch
+
+
+    assert len(stack) == 0, f"missing: {stack[-1]}"
+
+    body.content = buffer
+    prompt.append(body)
+
 
     # Function to restore placeholders to their original characters
     def restore_placeholders(segment):
@@ -162,17 +269,12 @@ def parse_prompt(text):
                       .replace('__ESCAPED_CLOSE_BRACKET__', ']') \
                       .replace('__ESCAPED_BACKSLASH__', '\\')
 
-    # Process segments to remove braces/brackets and restore placeholders
-    result = []
-    for segment in segments:
-        segment = restore_placeholders(segment)
-        if segment.startswith('{') and segment.endswith('}'):
-            result.append((PromptSegment.VARIABLE, segment[1:-1]))
-        elif segment.startswith('[') and segment.endswith(']'):
-            result.append((PromptSegment.HOLE, segment[1:-1]))
-        else:
-            result.append((PromptSegment.BODY, segment))
-    return result
+
+    for i in range(len(prompt)):
+        if isinstance(prompt[i], Body):
+            prompt[i].content = restore_placeholders(prompt[i].content)
+
+    return prompt, prompt_holes, prompt_vars
 
 
 def compile_prompt(parsed_prompt: list[tuple[PromptSegment, str]], args, model="gpt-4o-mini", temperature=0.7):
