@@ -143,6 +143,10 @@ class Hole:
         self.parents: list           = []
         self.children: list          = []
 
+        self.spliterator             = False
+        self.split_start_pattern     = ""
+        self.split_end_pattern       = ""
+
 
 
 class Variable:
@@ -191,6 +195,9 @@ def parse_prompt(text):
             elif len(stack) == 1:
                 # had outer condition
                 hole.start_pattern = buffer
+            elif len(stack) == 2:
+                hole.spliterator = True
+                hole.split_start_pattern = buffer
             else:
                 assert False, f"hole syntax error:\n{buffer}"
 
@@ -219,19 +226,14 @@ def parse_prompt(text):
 
             if ch == "]":
                 if len(stack) == 0:
-                    # finalize hole
-                    if hole.name is None:
-                        # no outer condition
-                        hole.name = buffer
-                    else:
-                        # has outer conditions
-                        hole.end_pattern = buffer
+                    hole.end_pattern = buffer
 
                     new_hole = Hole()
                     new_hole.parents.append(hole)
                     hole.children.append(new_hole)
 
-                    assert hole.name not in prompt_holes, f"hole name {hole.name} already taken"
+                    if hole.name:
+                        assert hole.name not in prompt_holes, f"hole name {hole.name} already taken"
 
                     prompt_holes[hole.name] = hole
                     prompt.append(hole)
@@ -239,7 +241,13 @@ def parse_prompt(text):
                     hole = new_hole
 
                 elif len(stack) == 1:
-                    # in inner portion; name hole
+                    # has outer conditions
+                    if hole.name is None:
+                        hole.name = buffer
+                    else:
+                        hole.split_end_pattern = buffer
+
+                elif len(stack) == 2:
                     hole.name = buffer
 
             elif ch == "}":
@@ -248,6 +256,7 @@ def parse_prompt(text):
                 prompt_vars[variable.name] = None
                 prompt.append(variable)
                 variable = Variable()
+
 
             buffer = ""
 
