@@ -1,8 +1,9 @@
-from .completions import Completion
+from .completions import Completion, CompletionStatus
 from enum import Enum
 from dataclasses import dataclass
 import re
 import asyncio
+from queue import Queue
 
 
 @dataclass
@@ -29,18 +30,42 @@ class Spliterator:
         self.segments = [""]
         self.segment_types = [Segment(None)]
 
-
-    def start(self):
-        self.completion.start()
-        asyncio.run_coroutine_threadsafe(self._filter(), self.completion.completions_loop)
+        self.stream_q = Queue()
 
     def result(self):
+        self._ensure_completion_stream()
+
         self.completion.result()
         return self.segments
+
+    def _ensure_completion_stream(self):
+        if self.completion.status == CompletionStatus.PENDING:
+            assert False, f"Spliterator.completion.start() must be called before Spliterator.start()"
 
     def _add_segment(self, segment_type):
         self.segments.append("")
         self.segment_types.append(segment_type)
+
+    def stream(self, capture:list[str]|str=None):
+        """
+        capture: type or list of pair types to include in stream. If None, will use all defined pairs.
+        """
+        self._ensure_completion_stream()
+
+        asyncio.run_coroutine_threadsafe(self._filter(), self.completion.completions_loop)
+
+        if capture is None:
+            # capture all pairs
+            capture = [p for p in self.pairs.keys()]
+
+        while True:
+            segment_type, segment = self.stream_q.get()
+
+            if segment_type is None:
+                break
+
+            if segment_type in capture:
+                yield segment
 
 
     async def _filter(self):
@@ -49,6 +74,28 @@ class Spliterator:
 
         async for tok in self.completion.astream():
             self.segments[-1] += tok
+
+            if len(close_q) > 0:
+                close_match = close_q[-1].search(self.segments[-1])
+            else:
+                close_match = False
+
+            if close_match:
+                segment_open = open_q.pop()
+                _ = close_q.pop()
+                start, end = close_match.start(), close_match.end()
+                chars = self.segments.pop()
+
+                self.segments.append(chars[:start])
+
+                self.stream_q.put((segment_open.segment.segment_type, chars[:start]))
+
+                self._add_segment(SegmentClose(segment_open))
+                self.segments[-1] += chars[start:end]
+                self._add_segment(segment_open.prev_segment)
+                self.segments[-1] += chars[end:]
+
+
 
             for segment_type, pair in self.pairs.items():
                 opening, ending = pair
@@ -73,24 +120,7 @@ class Spliterator:
                     break
 
 
-            if len(close_q) > 1:
-                close_match = close_q[-1].search(self.segments[-1])
-            else:
-                close_match = False
-
-            if close_match:
-                segment_open = open_q.pop()
-                _ = close_q.pop()
-                start, end = close_match.start(), close_match.end()
-                chars = self.segments.pop()
-
-                self.segments.append(chars[:start])
-
-                self._add_segment(SegmentClose(segment_open))
-                self.segments[-1] += chars[start:end]
-                self._add_segment(segment_open.prev_segment)
-                self.segments[-1] += chars[end:]
-
+        self.stream_q.put((None, None))
 
     def add_pair(self, name, open_pattern, close_pattern, regex=False):
 

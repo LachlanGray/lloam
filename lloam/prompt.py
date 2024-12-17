@@ -7,49 +7,10 @@ import asyncio
 from .completions import Completion, CompletionStatus
 from .segmentation import Spliterator
 
-def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7):
-    """
-    Decorator to define a prompt function using a lloam template string.
-
-
-    Parameters
-    ----------
-    f : callable
-        The function to decorate. The function should have a docstring that defines the prompt template.
-    model : str, optional
-        The model to use for completions. Default is "gpt-4o-mini".
-    temperature : float, optional
-        The temperature to use for completions. Default is 0.9.
-
-
-    Returns
-    -------
-    callable
-        A decorated function that returns a Prompt object.
-
-
-    Syntax
-    ------
-    - Variables: {variable_name}
-    - Holes: [hole_name]
-
-    Variables
-    - Variables are substituted into the prompt template like an f-string
-    - Variables can be
-        - positional or keyword arguments
-        - attributes of positional or keyword arguments
-        - the result of previously defined holes
-
-    Holes
-    - Holes are completed by the language model in order
-    - Once completed, the result can be used as a variable
-    - You can define the stopping conditions as a regex using "up until" syntax, e.g.
-
-        [hole_name:regexp]
-
-    """
+def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7, start=True):
 
     if f is None:
+        # kwargs were given; decorator evaluates to decorator with no args
         def decorator(f):
             def wrapper(*args, **kwargs):
                 fn_args, default_kwargs = get_signature(f)
@@ -71,13 +32,14 @@ def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7):
                     args,
                     model=model,
                     temperature=temperature,
-                    start=True
+                    start=start
                 )
 
             return wrapper
 
         return decorator
 
+    # no kwargs given, return wrapper directly
     def wrapper(*args, **kwargs):
         fn_args, default_kwargs = get_signature(f)
 
@@ -93,8 +55,13 @@ def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7):
         args = {k: v for k, v in zip(fn_args, args)}
         args = {**args, **kwargs}
 
-
-        return Prompt(f, args,model=model, temperature=temperature, start=True)
+        return Prompt(
+            f,
+            args,
+            model=model,
+            temperature=temperature,
+            start=start
+        )
 
     return wrapper
 
@@ -169,8 +136,8 @@ def parse_prompt(text):
         return {'\\{': '__ESCAPED_OPEN_BRACE__',
                 '\\}': '__ESCAPED_CLOSE_BRACE__',
                 '\\[': '__ESCAPED_OPEN_BRACKET__',
-                '\\]': '__ESCAPED_CLOSE_BRACKET__',
-                '\\\\': '__ESCAPED_BACKSLASH__'}.get(match.group(), match.group())
+                '\\]': '__ESCAPED_CLOSE_BRACKET__'}.get(match.group(), match.group())
+
 
     # Replace escaped braces and brackets with placeholders
     text = escape_pattern.sub(replace_escaped, text)
@@ -277,7 +244,6 @@ def parse_prompt(text):
                       .replace('__ESCAPED_CLOSE_BRACE__', '}') \
                       .replace('__ESCAPED_OPEN_BRACKET__', '[') \
                       .replace('__ESCAPED_CLOSE_BRACKET__', ']') \
-                      .replace('__ESCAPED_BACKSLASH__', '\\')
 
 
     for i in range(len(prompt)):
@@ -330,7 +296,7 @@ def compile_prompt(
 
         elif isinstance(segment, Hole):
 
-            segment.completion = Completion(cells[:])
+            segment.completion = Completion(cells[:], temperature=temperature)
 
             if segment.start_pattern:
                 print("WARNING: start patterns not implemented yet! Completion will include preamble")
@@ -381,6 +347,7 @@ def compile_prompt(
 class Prompt:
     def __init__(self, f, args, model="gpt-4o-mini", temperature=0.7, start=False):
         self.prompt_src = preprocess(f)
+        self.args = args
         self.prompt, self.prompt_holes, self.prompt_vars = parse_prompt(self.prompt_src)
 
         self.entrypoint = compile_prompt(
