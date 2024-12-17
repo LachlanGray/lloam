@@ -4,9 +4,10 @@ import re
 from enum import Enum
 from concurrent.futures import Future
 import asyncio
-from dataclasses import dataclass
+from contextlib import contextmanager
 
 from .completions import Completion, CompletionStatus
+from .segmentation import Spliterator
 
 def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7):
     """
@@ -143,20 +144,22 @@ class Hole:
         self.parents: list           = []
         self.children: list          = []
 
-        self.spliterator             = False
+        self.has_spliterator             = False
         self.split_start_pattern     = ""
         self.split_end_pattern       = ""
+
+        self.completion              = None
+        self.spliterator             = None
 
 
 
 class Variable:
     def __init(self):
-        self.name:str                = None
+        self.content:str                = None
 
 class Body:
     def __init(self):
         self.content:str             = None
-
 
 
 def parse_prompt(text):
@@ -196,7 +199,7 @@ def parse_prompt(text):
                 # had outer condition
                 hole.start_pattern = buffer
             elif len(stack) == 2:
-                hole.spliterator = True
+                hole.has_spliterator = True
                 hole.split_start_pattern = buffer
             else:
                 assert False, f"hole syntax error:\n{buffer}"
@@ -252,8 +255,8 @@ def parse_prompt(text):
 
             elif ch == "}":
                 # define used variable
-                variable.name = buffer
-                prompt_vars[variable.name] = None
+                variable.content = buffer
+                prompt_vars[variable.content] = None
                 prompt.append(variable)
                 variable = Variable()
 
@@ -286,108 +289,163 @@ def parse_prompt(text):
     return prompt, prompt_holes, prompt_vars
 
 
-def compile_prompt(parsed_prompt: list[tuple[PromptSegment, str]], args, model="gpt-4o-mini", temperature=0.7):
-    prompt_vars = {**args}
+def compile_prompt(
+        prompt_segments, prompt_holes, prompt_vars,
+        args, 
+        model="gpt-4o-mini",
+        temperature=0.7
+):
+
+    @contextmanager
+    def temporary_scope(variable_dict):
+        # Save the current global variables
+        original_globals = globals().copy()
+        try:
+            # Inject the new variables
+            globals().update(variable_dict)
+            yield
+        finally:
+            # Revert to the original global state
+            globals().clear()
+            globals().update(original_globals)
+
+
+    # validate vars
+    for prompt_var in prompt_vars.keys():
+        if "." in prompt_var:
+            prompt_var = prompt_var.split(".")[0]
+
+        if not (prompt_var in args or
+                prompt_var in prompt_holes):
+
+            assert False, f"prompt variable {prompt_var} not defined"
+
+    # get entrypoint
+    for segment in prompt_segments:
+        if isinstance(segment, Hole):
+            entrypoint = segment.name
+            break
+
+    # make prompt
     cells = []
-    entrypoint = None
+    for segment in prompt_segments:
+        if isinstance(segment, Body):
+            cells.append(segment.content)
 
-    prev_call = None
+        elif isinstance(segment, Variable):
+            if segment.content in prompt_holes:
+                cells.append(prompt_holes[segment.content].completion)
+            elif segment.content in args:
+                arg = args[segment.content]
 
-    for segment_type, symbol in parsed_prompt:
+                if isinstance(arg, Completion):
+                    arg = arg.result()
 
-        if segment_type == PromptSegment.BODY:
-            cells.append(symbol)
-
-        elif segment_type == PromptSegment.VARIABLE:
-            if symbol in prompt_vars:
-                if isinstance(prompt_vars[symbol], Prompt):
-                    cells.append(prompt_vars[symbol].result())
-                elif isinstance(prompt_vars[symbol], Completion):
-                    cells.append(prompt_vars[symbol].result())
-                else:
-                    cells.append(prompt_vars[symbol])
-
-            elif "." in symbol:
-                obj_name, *attributes = symbol.split(".")
-                assert obj_name in prompt_vars, f"No symbol {obj_name} in prompt_vars"
-
-                obj = prompt_vars[obj_name]
-
-                nested_result = obj
-                for attribute in attributes:
-                    nested_result = getattr(nested_result, attribute)
-
-                if isinstance(nested_result, Completion):
-                    cells.append(nested_result.result())
-                else:
-                    cells.append(str(nested_result))
+                cells.append(str(arg))
+                prompt_vars[segment.content] = str(arg)
 
             else:
-                raise ValueError(f"Variable {symbol} used before definition")
 
-        elif segment_type == PromptSegment.HOLE:
-            if symbol in prompt_vars:
-                raise ValueError(f"Variable name {symbol} already defined as variable, can't redefine as hole.")
+                output = {}
+                exec("x = " + segment.content, args, output)
 
-            compl = Completion(
-                cells, model=model, temperature=temperature
-            )
+                cells.append(output["x"])
+                prompt_vars[segment.content] = output["x"]
 
-            stop = None
-            if ":" in symbol:
-                symbol, regexp = symbol.split(":")
-                symbol = symbol.strip()
-                stop = regexp.strip()
 
-                compl.add_stop(stop)
+        elif isinstance(segment, Hole):
 
-            cells.append(compl)
-            prompt_vars[symbol] = compl
+            segment.completion = Completion(cells[:])
 
-            if prev_call:
-                prompt_vars[prev_call].add_done_callback(prompt_vars[symbol].start)
-            else:
-                entrypoint = symbol
+            if segment.start_pattern:
+                print("WARNING: start patterns not implemented yet! Completion will include preamble")
 
-            prev_call = symbol
+            if segment.end_pattern:
+                if segment.end_pattern[0] == "r":
+                    segment.end_pattern = segment.end_pattern[1:]
+                    regex = True
+                else:
+                    regex = False
+
+                segment.completion.add_stop(segment.end_pattern, regex=regex)
+
+            # create spliterator
+            if segment.has_spliterator:
+                segment.spliterator = Spliterator(segment.completion, allow_nesting=False)
+
+                if segment.split_start_pattern and segment.split_end_pattern:
+                    split_start = segment.split_start_pattern
+                    split_end = segment.split_end_pattern
+                    regex = False
+                    if split_start[0] == "r":
+                        regex = True
+                        split_start = split_start[1:]
+
+                    if split_end[0] == "r":
+                        regex = True
+                        split_end = split_end[1:]
+
+                    segment.spliterator.add_pair("capture", split_start, split_end, regex=regex)
+
+                else:
+                    assert False, f"spliterator requires start and end pattern for now"
+
+
+            # add callback to parents (parent for now)
+            for parent in segment.parents:
+                parent.completion.add_done_callback(segment.completion.start)
+
+            cells.append(segment.completion)
 
         else:
-            raise ValueError("Unknown segment type")
+            assert False
 
-    exitpoint = prev_call
-
-    return cells, prompt_vars, entrypoint, exitpoint
+    return entrypoint
 
 
 class Prompt:
     def __init__(self, f, args, model="gpt-4o-mini", temperature=0.7, start=False):
         self.prompt_src = preprocess(f)
-        self.parsed_prompt = parse_prompt(self.prompt_src)
-        self.cells, self.prompt_vars, entrypoint, exitpoint = compile_prompt(self.parsed_prompt, args, model=model, temperature=temperature)
-        self.entrypoint = entrypoint
-        self.exitpoint = exitpoint
+        self.prompt, self.prompt_holes, self.prompt_vars = parse_prompt(self.prompt_src)
+
+        self.entrypoint = compile_prompt(
+            self.prompt,
+            self.prompt_holes,
+            self.prompt_vars,
+            args, 
+            model=model,
+            temperature=temperature
+        )
 
         if start:
             self.start()
 
     def start(self):
-        self.prompt_vars[self.entrypoint].start()
+        self.prompt_holes[self.entrypoint].completion.start()
 
     def __getattr__(self, name):
-        if name in self.prompt_vars:
+        if name in self.prompt_holes:
+
+            hole = self.prompt_holes[name]
+            if hole.has_spliterator:
+                return hole.spliterator
+            else:
+                return hole.completion
+
+        elif name in self.prompt_vars:
             var = self.prompt_vars[name]
             return var
+
         else:
             raise AttributeError(f"Prompt has no attribute {name}")
 
-    def __str__(self):
-        return "".join(str(cell) for cell in self.cells)
 
     def __await__(self):
         return self._check_completion().__await__()
 
     async def _check_completion(self):
-        completions = [var for var in self.prompt_vars.values() if isinstance(var, Completion)]
+        # completions = [var for var in self.prompt_vars.values() if isinstance(var, Completion)]
+        completions = [hole.completion for hole in self.prompt_holes.values()]
         while not all(var.status == CompletionStatus.FINISHED for var in completions):
             await asyncio.sleep(0.1)
         return True

@@ -1,4 +1,5 @@
-from lloam.prompt import parse_prompt
+from lloam.prompt import parse_prompt, compile_prompt
+import re
 
 
 
@@ -9,11 +10,13 @@ def test_parser():
 
     This is a [[end_hole]end]
 
-    This is a {variable}
+    This is a variable referencing a {hole}
 
     This was \[escaped\]
 
     This is a pair spliterator [[inner[split_iterator]conditions]]
+
+    This is a pair spliterator [outer_and[inner[split_and_stop]conditions]end]
 
     This is a pair spliterator [outer_and[inner[split_and_stop]conditions]end]
 
@@ -28,7 +31,7 @@ def test_parser():
     assert prompt[3].start_pattern == "start"
     assert prompt[5].end_pattern == "end"
 
-    assert prompt[7].name == "variable"
+    assert prompt[7].name == "hole"
 
     assert prompt[3] == prompt_holes["start_hole"]
 
@@ -47,9 +50,49 @@ def test_parser():
     assert prompt[11].end_pattern == "end"
 
 
+def test_compile():
+    test_body = """
+
+    This is {arg1}
+
+    This is a {thing.thingy}
+
+    This is a pair spliterator [start[aaa[hole1]bbb]end]
+
+    This is a pair spliterator [rstart[raaa[hole2]rbbb]rend]
+
+
+    """
+
+
+    prompt, prompt_holes, prompt_vars = parse_prompt(test_body)
+
+    class Thing:
+        thingy = "thang"
+
+    args = {"arg1": "hello", "thing": Thing()}
+
+    entrypoint = compile_prompt(
+        prompt,
+        prompt_holes,
+        prompt_vars,
+        args
+    )
+
+    # normal
+    assert prompt[5].completion.stops[0] == re.compile("end")
+    # assert prompt[5].completion.starts[0] == re.compile("start")
+    assert prompt[5].spliterator.pairs["capture"] == (re.compile('aaa'), re.compile('bbb'))
+
+    # regexes
+    assert prompt[7].completion.stops[0] == re.compile("end")
+    # assert prompt[5].completion.starts[0] == re.compile("start")
+    assert prompt[7].spliterator.pairs["capture"] == (re.compile('aaa'), re.compile('bbb'))
+
+    assert prompt_vars["thing.thingy"] == "thang"
 
 
 
 if __name__ == "__main__":
-    test_parser()
+    test_compile()
 

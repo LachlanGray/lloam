@@ -1,13 +1,13 @@
 import lloam
 from lloam.completions import Completion
-from lloam.segmentation import Segmentation
+from lloam.segmentation import Spliterator
 from lloam.segmentation import Segment, SegmentOpen, SegmentClose
 import pytest
 
 from tests.utils import tokens_and_generator
 
 
-@pytest.fixture
+# @pytest.fixture
 def html_completion():
     name = "html_completion"
     prompt = "Could you write me a hello world blog post for an html template?"
@@ -23,7 +23,7 @@ def html_completion():
 def test_nested_pairs(html_completion):
     tokens, compl = html_completion
 
-    segmentation = Segmentation(compl)
+    segmentation = Spliterator(compl)
 
     segmentation.add_pair("code_block", r"```[^\n]*(?=\n)", "```", regex=True)
     segmentation.add_pair("head", "<head>", "</head>", regex=False)
@@ -58,8 +58,13 @@ def test_nested_pairs(html_completion):
             segment_stack.append(seg)
 
 
+def test_spliterator_stream(html_completion):
+    tokens, compl = html_completion
+
+
+
 
 if __name__ == "__main__":
     tokens, compl = html_completion()
 
-    test_nested_pairs((tokens, compl))
+    test_spliterator_stream((tokens, compl))

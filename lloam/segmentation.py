@@ -19,7 +19,7 @@ class SegmentClose:
     segment_open: SegmentOpen
 
 
-class Segmentation:
+class Spliterator:
     def __init__(self, completion:Completion, allow_nesting=True):
         self.completion = completion
         self.allow_nesting = allow_nesting
