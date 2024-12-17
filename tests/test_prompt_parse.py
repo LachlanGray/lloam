@@ -61,6 +61,8 @@ def test_compile():
 
     This is a pair spliterator [rstart[raaa[hole2]rbbb]rend]
 
+    These were passed: {"|".join(listed)} then [[last_hole]].
+
 
     """
 
@@ -70,7 +72,7 @@ def test_compile():
     class Thing:
         thingy = "thang"
 
-    args = {"arg1": "hello", "thing": Thing()}
+    args = {"arg1": "hello", "thing": Thing(), "listed": ["a", "b", "c"]}
 
     entrypoint = compile_prompt(
         prompt,
@@ -81,15 +83,26 @@ def test_compile():
 
     # normal
     assert prompt[5].completion.stops[0] == re.compile("end")
+    # TODO: uncomment when start conditions supported
     # assert prompt[5].completion.starts[0] == re.compile("start")
     assert prompt[5].spliterator.pairs["capture"] == (re.compile('aaa'), re.compile('bbb'))
 
     # regexes
     assert prompt[7].completion.stops[0] == re.compile("end")
+    # TODO: uncomment when start conditions supported
     # assert prompt[5].completion.starts[0] == re.compile("start")
     assert prompt[7].spliterator.pairs["capture"] == (re.compile('aaa'), re.compile('bbb'))
 
+    # member
     assert prompt_vars["thing.thingy"] == "thang"
+
+    # ensure completions receive appropriate slice
+    assert len(prompt[5].completion.prompt) == 5
+    assert len(prompt[7].completion.prompt) == 7
+
+    # inline var logic
+    assert prompt[11].completion.prompt[-2] == "a|b|c"
+
 
 
 

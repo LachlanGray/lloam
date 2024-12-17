@@ -2,9 +2,7 @@ import textwrap
 import inspect
 import re
 from enum import Enum
-from concurrent.futures import Future
 import asyncio
-from contextlib import contextmanager
 
 from .completions import Completion, CompletionStatus
 from .segmentation import Spliterator
@@ -296,29 +294,6 @@ def compile_prompt(
         temperature=0.7
 ):
 
-    @contextmanager
-    def temporary_scope(variable_dict):
-        # Save the current global variables
-        original_globals = globals().copy()
-        try:
-            # Inject the new variables
-            globals().update(variable_dict)
-            yield
-        finally:
-            # Revert to the original global state
-            globals().clear()
-            globals().update(original_globals)
-
-
-    # validate vars
-    for prompt_var in prompt_vars.keys():
-        if "." in prompt_var:
-            prompt_var = prompt_var.split(".")[0]
-
-        if not (prompt_var in args or
-                prompt_var in prompt_holes):
-
-            assert False, f"prompt variable {prompt_var} not defined"
 
     # get entrypoint
     for segment in prompt_segments:
