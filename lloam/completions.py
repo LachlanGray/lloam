@@ -77,7 +77,9 @@ class Completion:
         self.stops = []
         self.include_stops = include_stops
 
+        # TODO: determine from model argument
         self._async_gen_func = stream_chat_completion
+
         self.chunks = []
         self._chunks_lock = threading.Lock()
 
@@ -295,9 +297,14 @@ class Completion:
     def done(self):
         return self._done_event.is_set()
 
-
     def findall(self, pattern):
         self.result()
         return re.findall(pattern, "".join(self.chunks))
 
+    def __await__(self):
+        async def wait_for_result():
+            while not self.done():
+                await asyncio.sleep(0.1)
+            return self.result()
+        return wait_for_result().__await__()
 
