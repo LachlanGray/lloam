@@ -4,7 +4,7 @@ from utils import tokens_and_generator
 import re
 
 
-# @pytest.fixture
+@pytest.fixture
 def say_hello():
     name = "say_hello"
     prompt = "hello there!"
@@ -12,7 +12,7 @@ def say_hello():
     _, f = tokens_and_generator(name, prompt)
     return f
 
-# @pytest.fixture
+@pytest.fixture
 def blog_html():
     name = "html_completion"
 

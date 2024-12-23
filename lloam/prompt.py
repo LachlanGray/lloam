@@ -5,7 +5,7 @@ from enum import Enum
 import asyncio
 
 from .completions import Completion, CompletionStatus
-from .segmentation import Spliterator
+from .spliterator import Spliterator
 
 def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7, start=True):
 
@@ -109,7 +109,7 @@ class Hole:
         self.parents: list           = []
         self.children: list          = []
 
-        self.has_spliterator             = False
+        self.has_spliterator         = False
         self.split_start_pattern     = ""
         self.split_end_pattern       = ""
 
@@ -119,12 +119,12 @@ class Hole:
 
 
 class Variable:
-    def __init(self):
-        self.content:str                = None
+    def __init__(self):
+        self.content:str = None
 
 class Body:
-    def __init(self):
-        self.content:str             = None
+    def __init__(self):
+        self.content:str = None
 
 
 def parse_prompt(text):
@@ -221,6 +221,7 @@ def parse_prompt(text):
             elif ch == "}":
                 # define used variable
                 variable.content = buffer
+                variable.name = buffer
                 prompt_vars[variable.content] = None
                 prompt.append(variable)
                 variable = Variable()
@@ -274,10 +275,10 @@ def compile_prompt(
             cells.append(segment.content)
 
         elif isinstance(segment, Variable):
-            if segment.content in prompt_holes:
-                cells.append(prompt_holes[segment.content].completion)
-            elif segment.content in args:
-                arg = args[segment.content]
+            if segment.name in prompt_holes:
+                cells.append(prompt_holes[segment.name].completion)
+            elif segment.name in args:
+                arg = args[segment.name]
 
                 if isinstance(arg, Completion):
                     arg = arg.result()
@@ -292,6 +293,7 @@ def compile_prompt(
 
                 cells.append(output["x"])
                 prompt_vars[segment.content] = output["x"]
+                segment.content = output["x"]
 
 
         elif isinstance(segment, Hole):

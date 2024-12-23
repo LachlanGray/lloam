@@ -18,8 +18,6 @@ def test_parser():
 
     This is a pair spliterator [outer_and[inner[split_and_stop]conditions]end]
 
-    This is a pair spliterator [outer_and[inner[split_and_stop]conditions]end]
-
     """
 
 
@@ -35,7 +33,7 @@ def test_parser():
 
     assert prompt[3] == prompt_holes["start_hole"]
 
-    assert prompt_vars['variable'] == None
+    assert prompt_vars['hole'] == None
 
     assert "escaped" not in prompt_holes
 

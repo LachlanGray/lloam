@@ -10,8 +10,8 @@ build: venv
 	python setup.py sdist bdist_wheel
 
 
-.PHONY: test
-test:
+.PHONY: tests
+tests:
 	. venv/bin/activate && pytest
 
 
