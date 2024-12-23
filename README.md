@@ -8,6 +8,9 @@ Lloam is a minimal prompting library offering a clean way to write prompts and m
 - **Lloam prompts:** clean function syntax for inline prompts
 
 
+Lloam treats completions as first-class citizens in the programming model, with built-in concurrency and dependency management. Instead of forcing developers to explicitly handle the asynchronous nature of completions, lloam makes it feel natural within normal Python patterns.
+
+
 ## Usage
 
 ```
