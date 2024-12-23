@@ -31,6 +31,8 @@ class Spliterator:
         self.segment_types = [Segment(None)]
 
         self.stream_q = Queue()
+        self.astream_q = asyncio.Queue()
+
 
     def result(self):
         self._ensure_completion_stream()
@@ -52,13 +54,16 @@ class Spliterator:
         """
         self._ensure_completion_stream()
 
-        asyncio.run_coroutine_threadsafe(self._filter(), self.completion.completions_loop)
-
         if capture is None:
             # capture all pairs
             capture = [p for p in self.pairs.keys()]
 
+        asyncio.run(self._filter())
+
         while True:
+            if self.stream_q.empty():
+                continue
+
             segment_type, segment = self.stream_q.get()
 
             if segment_type is None:
@@ -68,11 +73,36 @@ class Spliterator:
                 yield segment
 
 
+    async def astream(self, capture:list[str]|str=None):
+        """
+        capture: type or list of pair types to include in stream. If None, will use all defined pairs.
+        """
+        self._ensure_completion_stream()
+
+        if capture is None:
+            # capture all pairs
+            capture = [p for p in self.pairs.keys()]
+
+        asyncio.create_task(self._filter())
+
+        while True:
+
+            segment_type, segment = await self.astream_q.get()
+
+            if segment_type is None:
+                break
+
+            if segment_type in capture:
+                yield segment
+
+
     async def _filter(self):
+    # def _filter(self):
         open_q = [SegmentOpen(self.segment_types[0], None)]
         close_q = []
 
         async for tok in self.completion.astream():
+        # for tok in self.completion.stream():
             self.segments[-1] += tok
 
             if len(close_q) > 0:
@@ -89,6 +119,7 @@ class Spliterator:
                 self.segments.append(chars[:start])
 
                 self.stream_q.put((segment_open.segment.segment_type, chars[:start]))
+                await self.astream_q.put((segment_open.segment.segment_type, chars[:start]))
 
                 self._add_segment(SegmentClose(segment_open))
                 self.segments[-1] += chars[start:end]
@@ -121,6 +152,7 @@ class Spliterator:
 
 
         self.stream_q.put((None, None))
+        await self.astream_q.put((None, None))
 
     def add_pair(self, name, open_pattern, close_pattern, regex=False):
 
