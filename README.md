@@ -91,14 +91,14 @@ import lloam
 @lloam.prompt(model="gpt-3.5-turbo", temperature=0.9)
 def storytime(x, n=5):
     """
-    One kind of {x} is a [name:\.].
+    One kind of {x} is a [[name].].
 
-    {n} {name}s makes a [group:\.].
+    {n} {name}s makes a [[group].].
 
     Here's a story about the {group},
     and its {n} {name}s.
 
-    [story]
+    [[story]]
     """
 
 pets = storytime("domestic animal")
@@ -160,9 +160,9 @@ class RagAgent(lloam.Agent):
 
         user: {question}
 
-        [answer]
+        [[answer]]
 
         What would be a good followup question?
-        [followup]
+        [[followup]]
         """
 ```

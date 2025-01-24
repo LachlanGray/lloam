@@ -116,15 +116,23 @@ class Hole:
         self.completion              = None
         self.spliterator             = None
 
+    def __str__(self):
+        return self.completion.result()
 
 
 class Variable:
     def __init__(self):
         self.content:str = None
 
+    def __str__(self):
+        return str(self.content)
+
 class Body:
     def __init__(self):
         self.content:str = None
+
+    def __str__(self):
+        return str(self.content)
 
 
 def parse_prompt(text):
@@ -160,6 +168,11 @@ def parse_prompt(text):
                 body.content = buffer
                 prompt.append(body)
                 body = Body()
+
+            elif stack[-1] == "}":
+                buffer += ch
+                continue
+
             elif len(stack) == 1:
                 # had outer condition
                 hole.start_pattern = buffer
@@ -263,10 +276,13 @@ def compile_prompt(
 
 
     # get entrypoint
+    entrypoint = None
     for segment in prompt_segments:
         if isinstance(segment, Hole):
             entrypoint = segment.name
             break
+
+    assert entrypoint is not None, "no holes to fill in prompt!"
 
     # make prompt
     cells = []
@@ -383,6 +399,8 @@ class Prompt:
         else:
             raise AttributeError(f"Prompt has no attribute {name}")
 
+    def __str__(self):
+        return "".join([str(segment) for segment in self.prompt])
 
     def __await__(self):
         return self._check_completion().__await__()

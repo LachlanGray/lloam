@@ -117,23 +117,37 @@ class Completion:
                 self.prompt = self.prompt[:self.prompt.index(self)].copy()
 
             any_dicts = any(isinstance(p, dict) for p in self.prompt)
+            any_lists = any(isinstance(p, list) for p in self.prompt)
             # all_dicts = all(isinstance(p, dict) for p in self.prompt)
             # are_messages = all("role" in p for p in self.prompt if isinstance(p, dict))
+
+
+            if any_lists:
+                # unpack any list in prompt
+                new_prompt = []
+                for p in self.prompt:
+                    if isinstance(p, list):
+                        new_prompt.extend(p)
+                    else:
+                        new_prompt.append(p)
+
+                self.prompt = new_prompt
+
 
             # if prompt is mixture of oai messages and strings, strings are cast to user messages
             if any_dicts:
                 new_prompt = []
                 for p in self.prompt:
-                    if not isinstance(p, dict):
-                        new_prompt.append({
-                            "role": "user",
-                            "content": str(p)
-                        })
-                    else:
+                    if isinstance(p, dict):
                         if "role" in p:
                             new_prompt.append(p)
                         else:
                             new_prompt.append("\n".join([f"{k}: {v}" for k, v in p.items()]))
+                    else:
+                        new_prompt.append({
+                            "role": "user",
+                            "content": str(p)
+                        })
 
             else:
                 self.prompt = "".join([str(x) for x in self.prompt])

@@ -10,24 +10,30 @@ from .completions import Completion, CompletionStatus
 
 class Agent:
     def __init__(self):
-        self.logs = []
-        self.logs_queue = Queue()
+        self.stdin = Queue()
+        self.stderr = Queue()
+        self.stdout = Queue()
 
 
-    def log(self, message, level="info"):
+    def log(self, content, level="info"):
         log_entry = {
             "level": level,
-            "message": message,
+            "message": content,
             "timestamp": time.time()
         }
 
-        self.logs.append(log_entry)
-        self.logs_queue.put(log_entry)
+        self.stderr.put(log_entry)
+
+    def output(self, content):
+        self.stdout.put(content)
+
+    def send(self, content):
+        self.stdin.put(content)
 
 
-    def stream(self):
+    def log_stream(self):
         while True:
-            log_entry = self.logs_queue.get()
+            log_entry = self.stderr.get()
             yield log_entry
 
 
