@@ -10,10 +10,11 @@ from .streaming import stream_chat_completion
 
 class CompletionStatus(Enum):
     PENDING = 0
-    RUNNING = 1     # stream in progress
-    FINALIZING = 2  # strop condition met
-    FINISHED = 3
-    ERROR = 4
+    INITIALIZING = 1
+    RUNNING = 2     # stream in progress
+    FINALIZING = 3  # strop condition met
+    FINISHED = 4
+    ERROR = 5
 
 
 def completion(
@@ -107,6 +108,8 @@ class Completion:
 
 
     def start(self):
+
+        self.status = CompletionStatus.INITIALIZING
         if self.prompt is None:
             raise ValueError("Prompt not set")
 
@@ -160,6 +163,10 @@ class Completion:
         """
         :return: A generator that yields completion chunks as they are generated
         """
+
+        if self.status == CompletionStatus.PENDING:
+            raise Exception(f"Completion.start() must be called before streaming")
+
         while True:
             chunk = self.stream_q.get()
 
@@ -296,6 +303,10 @@ class Completion:
         self._invoke_callbacks()
 
     def result(self, timeout=None):
+
+        if self.status == CompletionStatus.PENDING:
+            raise Exception(f"Completion.start() must be called before result is obtainable")
+
         if not self._done_event.wait(timeout):
             raise TimeoutError()
         if self._exception:
