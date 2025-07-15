@@ -1,8 +1,8 @@
 import lloam
 import pytest
-from utils import tokens_and_generator
 import re
 
+from tests.utils import tokens_and_generator
 
 @pytest.fixture
 def say_hello():
