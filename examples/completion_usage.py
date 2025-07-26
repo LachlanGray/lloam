@@ -29,6 +29,7 @@ for r in responses:
     r.start()
 
 # ... code here would run immediately ...
+# ... completions continue in background ...
 
 for r in responses:
     print(r, end="\n\n")
