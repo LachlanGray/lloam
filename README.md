@@ -32,10 +32,10 @@ answer_1 = lloam.completion("What's the meaning of life?")
 answer_2 = lloam.completion("How many minutes to hard boil an egg?")
 answer_3 = lloam.completion("Who is the piano man?")
 
-print("This runs immediately!")
+# all three completions run in the background
 print("The completions are running...")
-print("We can wait for a completion with `.result()`")
 
+# .result() will pause until the completion finishes
 print(answer_2.result())
 print(answer_3.result())
 print(answer_1.result())
@@ -43,7 +43,7 @@ print(answer_1.result())
 ```
 
 
-**Streaming:** You can use `.stream()` to get a generator of the token stream
+**Streaming:** You can iterate over tokens in a completion as they arrive
 ```python
 messages = [
     {"role": "system", "content": "You answer questions in haikus"},
@@ -52,7 +52,7 @@ messages = [
 
 poem = lloam.completion(messages)
 
-for tok in poem.stream():
+for tok in poem:
     print(tok, end="")
 
 # Soil rich and robust,           
@@ -63,10 +63,10 @@ for tok in poem.stream():
 **Stopping conditions:** You can specify stopping conditions with strings and/or regexps
 ```python
 
-# completion will terminate before "." or "!"
+# completion will terminate on,  and exclude either "." or "!"
 one_sentence = lloam.completion("Tell me about owls", stops=[".", "!"])
 
-# terminates after closing code block
+# completion will terminate on closing code block
 numbers = lloam.completion(
     "Please write some python, open code blocks with ```python",
     regex_stops=[r"```\s+"],
@@ -113,11 +113,9 @@ for tok in pets.story.stream()
 ### Lloam Agents
 For a real example of a `lloam` agent, check out [Dixie](https://github.com/LachlanGray/dixie)!
 
-Lloam conceptualizes an agent as a datastructure around language. A `lloam.prompt` function can be a class method and access data directly, making the agent prompts very transparent to read in code.
+Lloam conceptualizes an agent as a datastructure around language. The lloam agent is just a python class that can have langauge state and language methods. 
 
-The main benefit of `lloam.Agent` is that it comes with a versatile `self.log()` method which can be monitored from another thread for control or debugging purposes.
-
-Here's a sketch of a RAG agent that uses a database to maintain a chat history, retrieved artifacts, and yield followup questions.
+Here's a sketch of a RAG agent that wraps an arbitrary database, and builds up context over a chat:
 
 ```python
 import lloam
@@ -131,15 +129,9 @@ class RagAgent(lloam.Agent):
     def ask(self, question):
         self.history.append({"role": "user", "content": question})
 
-        self.log(f"Making query: {question}")
+        # query
         results = self.db.query(question)
         self.artifacts.update(results)
-
-        n_docs = len(results)
-        if n_docs > 0:
-            self.log(f"Retrieved {n_docs} documents for: {query}")
-        else:
-            self.log(f"No documents for: {query}", level="warning")
 
         answer = self.answer(question)
 
@@ -147,7 +139,7 @@ class RagAgent(lloam.Agent):
 
         return {
             "answer": answer.answer
-            "followup": answer.followup
+            "citation": answer.citation
         }
 
 
@@ -162,7 +154,8 @@ class RagAgent(lloam.Agent):
 
         [[answer]]
 
-        What would be a good followup question?
-        [[followup]]
+        Please provide sources from context
+
+        [[citation]]
         """
 ```
