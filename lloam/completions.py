@@ -12,9 +12,10 @@ class CompletionStatus(Enum):
     PENDING = 0
     INITIALIZING = 1
     RUNNING = 2     # stream in progress
-    FINALIZING = 3  # strop condition met
-    FINISHED = 4
-    ERROR = 5
+    STOP_CONDITION = 3  # stop condition met
+    FINALIZING = 4
+    FINISHED = 5
+    ERROR = 6
 
 
 def completion(
@@ -221,7 +222,7 @@ class Completion:
                 self._refresh_status(chunk)
 
                 # close generator ASAP to save tokens
-                if self.status == CompletionStatus.FINALIZING:
+                if self.status == CompletionStatus.STOP_CONDITION:
                     await gen.aclose()
                     break
 
@@ -254,7 +255,7 @@ class Completion:
             matched = stop.search(prompt)
 
             if matched:
-                self.status = CompletionStatus.FINALIZING
+                self.status = CompletionStatus.STOP_CONDITION
 
                 start, end = matched.start(), matched.end()
 
@@ -339,4 +340,3 @@ class Completion:
                 await asyncio.sleep(0.1)
             return self.result()
         return wait_for_result().__await__()
-
