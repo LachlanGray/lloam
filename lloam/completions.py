@@ -84,6 +84,10 @@ class Completion:
 
         self.chunks = []
         self._chunks_lock = threading.Lock()
+        self._chunks_cv = threading.Condition(self._chunks_lock)
+        self._paused = False
+        self._pause_event = threading.Event()
+        self._pause_event.set()  # start in resumed state
 
         self.stream_q = Queue()
 
@@ -160,34 +164,74 @@ class Completion:
         asyncio.run_coroutine_threadsafe(self._run_generator(), self.completions_loop)
 
 
-    def stream(self):
+    def stream(self, from_index: int = 0):
         """
+        :param from_index: Start yielding from this chunk index (replays prior chunks).
         :return: A generator that yields completion chunks as they are generated
         """
 
         if self.status == CompletionStatus.PENDING:
             raise Exception(f"Completion.start() must be called before streaming")
 
+        idx = max(0, int(from_index))
         while True:
-            chunk = self.stream_q.get()
+            with self._chunks_lock:
+                # Yield any chunks we haven't returned yet
+                if idx < len(self.chunks):
+                    chunk = self.chunks[idx]
+                    idx += 1
+                else:
+                    # If finished and no new data, exit
+                    if self.done():
+                        break
+                    # Wait for more chunks
+                    self._chunks_cv.wait(timeout=0.5)
+                    continue
 
-            if chunk is None:
-                break
-
+            # Respect pause (read-side only)
+            self._pause_event.wait()
             yield chunk
 
-    async def astream(self, period=0.1):
+    async def astream(self, period=0.1, from_index: int = 0):
+        idx = max(0, int(from_index))
         while True:
-            if self.stream_q.empty():
+            # Drain any available chunks
+            with self._chunks_lock:
+                if idx < len(self.chunks):
+                    chunk = self.chunks[idx]
+                    idx += 1
+                else:
+                    # If no new chunks, decide whether to stop or poll again
+                    if self.done():
+                        break
+                    chunk = None
+
+            if chunk is None:
+                await asyncio.sleep(period)
+                continue
+
+            # Respect pause (read-side only)
+            while not self._pause_event.is_set():
                 await asyncio.sleep(period)
 
-            chunk = self.stream_q.get()
-
-
-            if chunk is None:
-                break
-
             yield chunk
+
+    # Iterator protocol helpers
+    def __iter__(self):
+        """Enable: for chunk in completion: ... (replay from start)."""
+        return self.stream()
+
+    def iter_from(self, index: int = 0):
+        """Create a sync iterator starting from a given chunk index."""
+        return self.stream(from_index=index)
+
+    def __aiter__(self):
+        """Enable: async for chunk in completion: ... (replay from start)."""
+        return self.astream()
+
+    def aiter_from(self, index: int = 0, period: float = 0.1):
+        """Create an async iterator starting from a given chunk index."""
+        return self.astream(period=period, from_index=index)
 
 
     def add_stop(self, stop, regex=False):
@@ -245,44 +289,48 @@ class Completion:
     def _refresh_status(self, chunk):
         # checks if stopping conditions have been met if so,
         # trim completion to that point and update the status
-
-        # with self._chunks_lock:
-        #     self.chunks.append(chunk)
         new_chunk = chunk
 
-        prompt = "".join(self.chunks + [chunk])
-        for stop in self.stops:
-            matched = stop.search(prompt)
+        with self._chunks_lock:
+            prompt = "".join(self.chunks + [chunk])
+            stop_triggered = False
+            for stop in self.stops:
+                matched = stop.search(prompt)
 
-            if matched:
-                self.status = CompletionStatus.STOP_CONDITION
+                if matched:
+                    self.status = CompletionStatus.STOP_CONDITION
 
-                start, end = matched.start(), matched.end()
+                    start, end = matched.start(), matched.end()
 
-                if self.include_stops:
-                    to_remove = len(prompt[end:])
-                else:
-                    to_remove = len(prompt[start:])
+                    if self.include_stops:
+                        to_remove = len(prompt[end:])
+                    else:
+                        to_remove = len(prompt[start:])
 
-                with self._chunks_lock:
                     while to_remove > 0:
                         if new_chunk == "":
-                            if self.chunks[-1] == "":
+                            if self.chunks and self.chunks[-1] == "":
                                 self.chunks.pop()
-
-                            self.chunks[-1] = self.chunks[-1][:-1]
-
-                        new_chunk = new_chunk[:-1]
+                            if self.chunks:
+                                self.chunks[-1] = self.chunks[-1][:-1]
+                        else:
+                            new_chunk = new_chunk[:-1]
 
                         to_remove -= 1
 
-                    self.stream_q.put(new_chunk)
-                    self.stream_q.put(None)         # sentinel
+                    stop_triggered = True
+                    break
 
-                break
+            # Append the (possibly trimmed) chunk
+            self.chunks.append(new_chunk)
 
-        self.chunks.append(new_chunk)
+            # Notify any waiting replay streams
+            self._chunks_cv.notify_all()
+
+        # Maintain existing queue behavior for any legacy consumers
         self.stream_q.put(new_chunk)
+        if stop_triggered:
+            self.stream_q.put(None)         # sentinel for queue consumers
 
     def add_done_callback(self, fn):
         with self._callback_lock:
@@ -296,12 +344,26 @@ class Completion:
     def set_result(self, result):
         self._result = result
         self._done_event.set()
+        with self._chunks_lock:
+            self._chunks_cv.notify_all()
         self._invoke_callbacks()
 
     def set_exception(self, exception):
         self._exception = exception
         self._done_event.set()
+        with self._chunks_lock:
+            self._chunks_cv.notify_all()
         self._invoke_callbacks()
+
+    def pause(self):
+        """Pause replaying to stream()/astream() consumers (does not pause generation)."""
+        self._paused = True
+        self._pause_event.clear()
+
+    def resume(self):
+        """Resume replaying to stream()/astream() consumers."""
+        self._paused = False
+        self._pause_event.set()
 
     def result(self, timeout=None):
 
@@ -333,6 +395,11 @@ class Completion:
     def findall(self, pattern):
         self.result()
         return re.findall(pattern, "".join(self.chunks))
+
+    def current_index(self) -> int:
+        """Return the current number of chunks accumulated (for resume points)."""
+        with self._chunks_lock:
+            return len(self.chunks)
 
     def __await__(self):
         async def wait_for_result():
