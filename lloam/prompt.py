@@ -2,15 +2,14 @@ import textwrap
 import inspect
 import re
 from enum import Enum
-from concurrent.futures import Future
 import asyncio
 
-from .completions import Completion, CompletionStatus
+from .completions import Completion, CompletionStatus, TextCompletion
 
-
-def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
+def prompt(f=None, *, model="openai/gpt-4o-mini", temperature=0.7, start=True):
 
     if f is None:
+        # kwargs were given; decorator evaluates to decorator with no args
         def decorator(f):
             def wrapper(*args, **kwargs):
                 fn_args, default_kwargs = get_signature(f)
@@ -27,12 +26,19 @@ def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
                 args = {k: v for k, v in zip(fn_args, args)}
                 args = {**args, **kwargs}
 
-                return Prompt(f, args, model=model, temperature=temperature)
+                return Prompt(
+                    f,
+                    args,
+                    model=model,
+                    temperature=temperature,
+                    start=start
+                )
 
             return wrapper
 
         return decorator
 
+    # no kwargs given, return wrapper directly
     def wrapper(*args, **kwargs):
         fn_args, default_kwargs = get_signature(f)
 
@@ -48,19 +54,24 @@ def prompt(f=None, *, model="gpt-4o-mini", temperature=0.9):
         args = {k: v for k, v in zip(fn_args, args)}
         args = {**args, **kwargs}
 
-
-        return Prompt(f, args)
+        return Prompt(
+            f,
+            args,
+            model=model,
+            temperature=temperature,
+            start=start
+        )
 
     return wrapper
 
 
-
-def preprocess(f: callable):
+def preprocess(f: callable, deco_fn=True):
     src = inspect.getsource(f)
     src = textwrap.dedent(src)
 
     lines = src.split("\n")
-    deco = lines.pop(0)
+    if deco_fn:
+        deco = lines.pop(0)
     fn_def = lines.pop(0)
 
     prompt_src = textwrap.dedent("\n".join(lines)).rstrip()
@@ -89,6 +100,35 @@ class PromptSegment(Enum):
     BODY = "body"
 
 
+class Hole:
+    def __init__(self):
+        self.start_pattern: str|None = None
+        self.name: str               = None
+        self.end_pattern: str|None   = None
+        self.parents: list           = []
+        self.children: list          = []
+
+        self.completion              = None
+
+    def __str__(self):
+        return self.completion.result()
+
+
+class Variable:
+    def __init__(self):
+        self.content:str = None
+
+    def __str__(self):
+        return str(self.content)
+
+class Body:
+    def __init__(self):
+        self.content:str = None
+
+    def __str__(self):
+        return str(self.content)
+
+
 def parse_prompt(text):
     # Define patterns for escaped characters
     escape_pattern = re.compile(r'\\.')
@@ -98,17 +138,107 @@ def parse_prompt(text):
         return {'\\{': '__ESCAPED_OPEN_BRACE__',
                 '\\}': '__ESCAPED_CLOSE_BRACE__',
                 '\\[': '__ESCAPED_OPEN_BRACKET__',
-                '\\]': '__ESCAPED_CLOSE_BRACKET__',
-                '\\\\': '__ESCAPED_BACKSLASH__'}.get(match.group(), match.group())
+                '\\]': '__ESCAPED_CLOSE_BRACKET__'}.get(match.group(), match.group())
+
 
     # Replace escaped braces and brackets with placeholders
     text = escape_pattern.sub(replace_escaped, text)
 
-    # Pattern to match unescaped {.*?} and [.*?]
-    pattern = re.compile(r'(\{.*?\}|\[.*?\])')
+    stack = []
+    prompt = []
+    prompt_holes = {}
+    prompt_vars = {}
 
-    # Split the text around the unescaped braces/brackets
-    segments = pattern.split(text)
+    buffer = ""
+    hole = Hole()
+    variable = Variable()
+    body = Body()
+
+    for ch in text:
+
+        if ch == "[":
+            if len(stack) == 0:
+                # opening new hole
+                body.content = buffer
+                prompt.append(body)
+                body = Body()
+
+            elif stack[-1] == "}":
+                buffer += ch
+                continue
+
+            elif len(stack) == 1:
+                # had outer condition
+                hole.start_pattern = buffer
+            else:
+                raise ValueError(f"nested hole syntax is not supported:\n{buffer}")
+
+            buffer = ""
+            stack.append("]")
+            continue
+
+        elif ch == "{":
+            if len(stack) == 0:
+                body.content = buffer
+                prompt.append(body)
+                body = Body()
+            else:
+                assert False, f"variable syntax error:\n{buffer}"
+
+            buffer = ""
+            stack.append("}")
+            continue
+
+        else:
+            pass
+
+
+        if len(stack) > 0 and ch == stack[-1]:
+            stack.pop()
+
+            if ch == "]":
+                if len(stack) == 0:
+                    hole.end_pattern = buffer
+
+                    new_hole = Hole()
+                    new_hole.parents.append(hole)
+                    hole.children.append(new_hole)
+
+                    if hole.name:
+                        assert hole.name not in prompt_holes, f"hole name {hole.name} already taken"
+
+                    prompt_holes[hole.name] = hole
+                    prompt.append(hole)
+
+                    hole = new_hole
+
+                elif len(stack) == 1:
+                    # has outer conditions
+                    if hole.name is None:
+                        hole.name = buffer
+                    else:
+                        raise ValueError(f"nested hole syntax is not supported:\n{buffer}")
+
+            elif ch == "}":
+                # define used variable
+                variable.content = buffer
+                variable.name = buffer
+                prompt_vars[variable.content] = None
+                prompt.append(variable)
+                variable = Variable()
+
+
+            buffer = ""
+
+        else:
+            buffer += ch
+
+
+    assert len(stack) == 0, f"missing: {stack[-1]}"
+
+    body.content = buffer
+    prompt.append(body)
+
 
     # Function to restore placeholders to their original characters
     def restore_placeholders(segment):
@@ -116,131 +246,134 @@ def parse_prompt(text):
                       .replace('__ESCAPED_CLOSE_BRACE__', '}') \
                       .replace('__ESCAPED_OPEN_BRACKET__', '[') \
                       .replace('__ESCAPED_CLOSE_BRACKET__', ']') \
-                      .replace('__ESCAPED_BACKSLASH__', '\\')
-
-    # Process segments to remove braces/brackets and restore placeholders
-    result = []
-    for segment in segments:
-        segment = restore_placeholders(segment)
-        if segment.startswith('{') and segment.endswith('}'):
-            result.append((PromptSegment.VARIABLE, segment[1:-1]))
-        elif segment.startswith('[') and segment.endswith(']'):
-            result.append((PromptSegment.HOLE, segment[1:-1]))
-        else:
-            result.append((PromptSegment.BODY, segment))
-    return result
 
 
-def compile_prompt(prompt_src: str, args, model="gpt-4o-mini", temperature=0.9):
-    prompt_vars = {**args}
-    cells = []
+    for i in range(len(prompt)):
+        if isinstance(prompt[i], Body):
+            prompt[i].content = restore_placeholders(prompt[i].content)
+
+    return prompt, prompt_holes, prompt_vars
+
+
+def compile_prompt(
+        prompt_segments, prompt_holes, prompt_vars,
+        args, 
+        model="openai/gpt-4o-mini",
+        temperature=0.7
+):
+
+
+    # get entrypoint
     entrypoint = None
+    for segment in prompt_segments:
+        if isinstance(segment, Hole):
+            entrypoint = segment.name
+            break
 
-    prev_call = None
-    after_hole = False
-    for segment_type, symbol in parse_prompt(prompt_src):
+    assert entrypoint is not None, "no holes to fill in prompt!"
 
-        if segment_type == PromptSegment.BODY:
-            cells.append(symbol)
+    # make prompt
+    cells = []
+    for segment in prompt_segments:
+        if isinstance(segment, Body):
+            cells.append(segment.content)
 
-        elif segment_type == PromptSegment.VARIABLE:
-            if symbol in prompt_vars:
-                if isinstance(prompt_vars[symbol], Prompt):
-                    cells.append(prompt_vars[symbol].result())
+        elif isinstance(segment, Variable):
+            if segment.name in prompt_holes:
+                cells.append(prompt_holes[segment.name].completion)
+            elif segment.name in args:
+                arg = args[segment.name]
+
+                if isinstance(arg, Completion):
+                    arg = arg.result()
+
+                cells.append(str(arg))
+                prompt_vars[segment.content] = str(arg)
+
+            else:
+
+                output = {}
+                exec("x = " + segment.content, args, output)
+
+                cells.append(output["x"])
+                prompt_vars[segment.content] = output["x"]
+                segment.content = output["x"]
+
+
+        elif isinstance(segment, Hole):
+
+            segment.completion = TextCompletion(cells[:], model=model, temperature=temperature)
+
+            if segment.start_pattern:
+                print("WARNING: start patterns not implemented yet! Completion will include preamble")
+
+            if segment.end_pattern:
+                if segment.end_pattern[0] == "r":
+                    segment.end_pattern = segment.end_pattern[1:]
+                    regex = True
                 else:
-                    cells.append(prompt_vars[symbol])
+                    regex = False
 
-            elif "." in symbol:
-                obj_name, *attributes = symbol.split(".")
-                obj = prompt_vars[obj_name]
+                segment.completion.add_stop(segment.end_pattern, regex=regex)
 
-                nested_result = obj
-                for attribute in attributes:
-                    nested_result = getattr(nested_result, attribute)
+            # add callback to parents (parent for now)
+            for parent in segment.parents:
+                parent.completion.add_done_callback(segment.completion.start)
 
-                cells.append(nested_result)
-
-            else:
-                raise ValueError(f"Variable {symbol} used before definition")
-
-        elif segment_type == PromptSegment.HOLE:
-            if symbol in prompt_vars:
-                raise ValueError(f"Variable {symbol} already defined")
-
-            stop = None
-            if ":" in symbol:
-                symbol, regexp = symbol.split(":")
-                symbol = symbol.strip()
-                stop = regexp.strip()
-
-            completion = Completion(
-                cells, stop=stop, model=model, temperature=temperature
-            )
-
-            cells.append(completion)
-            prompt_vars[symbol] = completion
-
-            if prev_call:
-                # TODO: us Prompt/Completion/Agent start() method
-                prompt_vars[prev_call].add_done_callback(lambda fut, content=symbol: prompt_vars[content].start())
-            else:
-                entrypoint = symbol
-
-            prev_call = symbol
+            cells.append(segment.completion)
 
         else:
-            raise ValueError("Unknown segment type")
+            assert False
 
-
-    return cells, prompt_vars, entrypoint
+    return entrypoint
 
 
 class Prompt:
-    def __init__(self, f, args, model="gpt-4o-mini", temperature=0.9):
+    def __init__(self, f, args, model="openai/gpt-4o-mini", temperature=0.7, start=False):
         self.prompt_src = preprocess(f)
-        self.cells, self.prompt_vars, entrypoint = compile_prompt(self.prompt_src, args, model=model, temperature=temperature)
+        self.args = args
+        self.prompt, self.prompt_holes, self.prompt_vars = parse_prompt(self.prompt_src)
 
-        self.prompt_vars[entrypoint].start()
+        self.entrypoint = compile_prompt(
+            self.prompt,
+            self.prompt_holes,
+            self.prompt_vars,
+            args, 
+            model=model,
+            temperature=temperature
+        )
+
+        if start:
+            self.start()
+
+    def start(self):
+        self.prompt_holes[self.entrypoint].completion.start()
 
     def __getattr__(self, name):
-        if name in self.prompt_vars:
-            return self.prompt_vars[name].result()
+        if name in self.prompt_holes:
+
+            hole = self.prompt_holes[name]
+            return hole.completion
+
+        elif name in self.prompt_vars:
+            var = self.prompt_vars[name]
+            return var
+
         else:
             raise AttributeError(f"Prompt has no attribute {name}")
 
     def __str__(self):
-        return "".join(str(cell) for cell in self.cells)
+        return "".join([str(segment) for segment in self.prompt])
 
     def __await__(self):
         return self._check_completion().__await__()
 
     async def _check_completion(self):
-        completions = [var for var in self.prompt_vars.values() if isinstance(var, Completion)]
+        # completions = [var for var in self.prompt_vars.values() if isinstance(var, Completion)]
+        completions = [hole.completion for hole in self.prompt_holes.values()]
         while not all(var.status == CompletionStatus.FINISHED for var in completions):
-            # Yield control back to the event loop for a while before rechecking
             await asyncio.sleep(0.1)
         return True
-
-
-    def inspect(self):
-        chunks = []
-        for cell in self.cells:
-            if isinstance(cell, Completion):
-                chunks.append(cell.visual_status())
-            else:
-                chunks.append(str(cell))
-
-        return "".join(chunks)
-
-
-
-    def progress(self):
-        n_completions = sum(1 for var in self.prompt_vars.values() if isinstance(var, Completion))
-        n_completed = sum(1 for var in self.prompt_vars.values() if isinstance(var, Completion) and var.status == CompletionStatus.FINISHED)
-
-        n_waiting = n_completions - n_completed
-
-        return n_completed, n_waiting
 
 
 if __name__ == "__main__":
@@ -283,9 +416,5 @@ if __name__ == "__main__":
 
     # mango_json = json.loads(str(template).strip())
     # print(mango_json)
-
-
-
-
 
 

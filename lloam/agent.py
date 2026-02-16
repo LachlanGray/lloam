@@ -2,28 +2,39 @@ import threading
 import os
 import time
 
+from queue import Queue
+
 from .prompt import Prompt
 from .completions import Completion, CompletionStatus
 
 
 class Agent:
     def __init__(self):
-        self.lock = threading.Lock()
-        self.logs = []
+        self.stdin = Queue()
+        self.stderr = Queue()
+        self.stdout = Queue()
 
-        self.silent = False
+
+    def log(self, content, level="info"):
+        log_entry = {
+            "level": level,
+            "message": content,
+            "timestamp": time.time()
+        }
+
+        self.stderr.put(log_entry)
+
+    def output(self, content):
+        self.stdout.put(content)
+
+    def send(self, content):
+        self.stdin.put(content)
 
 
-    def log(self, message, level="info"):
-        with self.lock:
-            self.logs.append({
-                "level": level,
-                "message": message,
-                "timestamp": time.time()
-            })
-
-            if not self.silent:
-                print(f"[{level}] {message}")
+    def log_stream(self):
+        while True:
+            log_entry = self.stderr.get()
+            yield log_entry
 
 
     def get_lloam_members(self) -> dict:

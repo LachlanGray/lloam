@@ -1,37 +1,60 @@
 import asyncio
 import threading
-from concurrent.futures import Future
+from queue import Queue
 from enum import Enum
 import re
 
-from typing import List, Optional, Dict, Union
+from typing import Any, List, Optional, Dict, Union
 
-from .streaming import stream_chat_completion
+from .backends import get_backend
+from .events import normalize_backend_event
+from .messages import normalize_messages
 
 class CompletionStatus(Enum):
     PENDING = 0
-    RUNNING = 1
-    FINISHED = 2
-    ERROR = 3
+    INITIALIZING = 1
+    RUNNING = 2     # stream in progress
+    STOP_CONDITION = 3  # stop condition met
+    FINALIZING = 4
+    FINISHED = 5
+    ERROR = 6
 
 
 def completion(
-    prompt: Union[str, List[str], List[Dict[str, str]]],
-    stop: Optional[str|List[str]] = None,
-    model: str = "gpt-4o-mini"
+    prompt: Union[str, Dict[str, Any], List[Dict[str, Any]]],
+    model: str = "openai/gpt-4o-mini",
+    stops: Optional[List[str]] = [],
+    regex_stops: Optional[List[str]] = [],
+    include_stops: bool = False,
+    backend_params: Optional[Dict] = None,
 ):
     """
-    :param prompt: A string, openai-style chat list, or list of strings
-    :param stop: A stopping string, or list of stopping strings
+    Generates a completion using a language model.
+
+    :param prompt: A string, message dict, or chat message list
+    :param model: Model slug in the format "<backend>/<model>", e.g. "openai/gpt-4o-mini"
+    :param stops: A list of strings that will terminate the completion early
+    :param regex_stops: A list of rexexp strings that will terminate the completion early
+    :param include_stops: Whether characters that trigger a stopping condition should go in the final result
 
     :return: A Completion object
     """
 
-    completion = Completion(prompt, stop)
+    completion = Completion(
+        prompt,
+        include_stops=include_stops,
+        model=model,
+        backend_params=backend_params,
+    )
+
+    for stop in stops:
+        completion.add_stop(stop)
+    for stop in regex_stops:
+        completion.add_stop(stop, regex=True)
+
     completion.start()
     return completion
 
-# TODO: Rename to RunningCompletion, have it return Completion which inherits from str
 
 class Completion:
     """
@@ -42,12 +65,20 @@ class Completion:
     completions_thread = None
 
 
-    def __init__(self, prompt, stop=None, model="gpt-4o-mini", temperature=0.9):
+    def __init__(
+            self,
+            prompt,
+            include_stops=False,
+            model="openai/gpt-4o-mini",
+            temperature=0.7,
+            backend_params: Optional[Dict] = None,
+    ):
         super().__init__()
         self.prompt = prompt
         self.status = CompletionStatus.PENDING
         self.model = model
         self.temperature = temperature
+        self.backend_params = backend_params or {}
 
         self._done_callbacks = []
         self._exception = None
@@ -56,12 +87,19 @@ class Completion:
         self._callback_lock = threading.Lock()
 
         self.stops = []
-        if stop:
-            self.add_stop(stop)
+        self.include_stops = include_stops
 
-        self._async_gen_func = stream_chat_completion
+        self._async_gen_func, self._provider_model = get_backend(self.model)
+
         self.chunks = []
+        self.events = []
         self._chunks_lock = threading.Lock()
+        self._chunks_cv = threading.Condition(self._chunks_lock)
+        self._paused = False
+        self._pause_event = threading.Event()
+        self._pause_event.set()  # start in resumed state
+
+        self.stream_q = Queue()
 
         self._initialize_event_loop_in_thread()
 
@@ -85,65 +123,154 @@ class Completion:
 
 
     def start(self):
+
+        self.status = CompletionStatus.INITIALIZING
         if self.prompt is None:
             raise ValueError("Prompt not set")
-        if isinstance(self.prompt, list) and isinstance(self.prompt[0], str):
-            if self in self.prompt:
-                self.prompt = self.prompt[:self.prompt.index(self)].copy()
 
-            self.prompt = "".join([str(x) for x in self.prompt])
+        if isinstance(self.prompt, dict):
+            self.prompt = normalize_messages([self.prompt])
+        elif isinstance(self.prompt, str):
+            self.prompt = normalize_messages(self.prompt)
+        elif isinstance(self.prompt, list):
+            self.prompt = normalize_messages(self.prompt)
+        else:
+            raise TypeError(
+                "Completion prompt must be a string, message dict, or list of message dicts"
+            )
 
         self.status = CompletionStatus.RUNNING
         asyncio.run_coroutine_threadsafe(self._run_generator(), self.completions_loop)
 
 
-    def add_stop(self, stop):
-        if isinstance(stop, str):
-            if len(stop) == 1:
+    def stream(self, from_index: int = 0):
+        """
+        :param from_index: Start yielding from this chunk index (replays prior chunks).
+        :return: A generator that yields completion chunks as they are generated
+        """
+
+        if self.status == CompletionStatus.PENDING:
+            raise Exception(f"Completion.start() must be called before streaming")
+
+        idx = max(0, int(from_index))
+        while True:
+            with self._chunks_lock:
+                # Yield any chunks we haven't returned yet
+                if idx < len(self.chunks):
+                    chunk = self.chunks[idx]
+                    idx += 1
+                else:
+                    # If finished and no new data, exit
+                    if self.done():
+                        break
+                    # Wait for more chunks
+                    self._chunks_cv.wait(timeout=0.5)
+                    continue
+
+            # Respect pause (read-side only)
+            self._pause_event.wait()
+            yield chunk
+
+    async def astream(self, period=0.1, from_index: int = 0):
+        idx = max(0, int(from_index))
+        while True:
+            # Drain any available chunks
+            with self._chunks_lock:
+                if idx < len(self.chunks):
+                    chunk = self.chunks[idx]
+                    idx += 1
+                else:
+                    # If no new chunks, decide whether to stop or poll again
+                    if self.done():
+                        break
+                    chunk = None
+
+            if chunk is None:
+                await asyncio.sleep(period)
+                continue
+
+            # Respect pause (read-side only)
+            while not self._pause_event.is_set():
+                await asyncio.sleep(period)
+
+            yield chunk
+
+    # Iterator protocol helpers
+    def __iter__(self):
+        """Enable: for chunk in completion: ... (replay from start)."""
+        return self.stream()
+
+    def iter_from(self, index: int = 0):
+        """Create a sync iterator starting from a given chunk index."""
+        return self.stream(from_index=index)
+
+    def __aiter__(self):
+        """Enable: async for chunk in completion: ... (replay from start)."""
+        return self.astream()
+
+    def aiter_from(self, index: int = 0, period: float = 0.1):
+        """Create an async iterator starting from a given chunk index."""
+        return self.astream(period=period, from_index=index)
+
+
+    def add_stop(self, stop, regex=False):
+        """
+        :param stop: A string or list of strings to stop completion
+        :param regex: If True, stop is treated as a regex
+        """
+        if isinstance(stop, list):
+            for stop in stop:
+                self.add_stop(stop)
+
+        elif isinstance(stop, str):
+            if not regex:
                 stop = re.escape(stop)
 
             self.stops.append(re.compile(stop))
-        elif isinstance(stop, list):
-            for stop in stop:
-                self.add_stop(stop)
+
         else:
-            raise ValueError("Stop must be a strings (or regexps) or list of strings")
+            raise ValueError("Stop must be a strings or list of strings")
 
     def __str__(self):
         return self.result()
 
 
-    def visual_status(self):
-        if self.status == CompletionStatus.PENDING:
-            return "[     ]"
-        elif self.status == CompletionStatus.RUNNING:
-            return "[ ... ]"
-        elif self.status == CompletionStatus.FINISHED:
-            with self._chunks_lock:
-                return "".join(self.chunks)
-
-
     async def _run_generator(self):
         gen = self._async_gen_func(
-            self.prompt, model=self.model, temperature=self.temperature
+            self.prompt,
+            model=self._provider_model,
+            temperature=self.temperature,
+            backend_params=self.backend_params,
         )
         try:
-            async for chunk in gen:
+            async for item in gen:
+                event = normalize_backend_event(item)
+                self.events.append(event)
+                event_type = event["type"]
+
+                if event_type != "text_delta":
+                    continue
+
+                chunk = event.get("text", "")
+                if not isinstance(chunk, str):
+                    chunk = str(chunk)
 
                 self._refresh_status(chunk)
 
-                if self.status == CompletionStatus.FINISHED:
+                # close generator ASAP to save tokens
+                if self.status == CompletionStatus.STOP_CONDITION:
                     await gen.aclose()
                     break
 
-                with self._chunks_lock:
-                    self.chunks.append(chunk)
 
-            self.status = CompletionStatus.FINISHED
+            self.status = CompletionStatus.FINALIZING
             with self._chunks_lock:
                 result = "".join(self.chunks)
 
+            self.stream_q.put(None)
+
             self.set_result(result)
+            self.status = CompletionStatus.FINISHED
 
 
         except Exception as e:
@@ -152,52 +279,89 @@ class Completion:
 
 
     def _refresh_status(self, chunk):
-        prompt = "".join(self.chunks)
-        for stop in self.stops:
+        # checks if stopping conditions have been met if so,
+        # trim completion to that point and update the status
+        new_chunk = chunk
 
-            if stop.match(chunk):
-                match_idx = stop.match(chunk).start()
-                leading = len(chunk[:match_idx])
+        with self._chunks_lock:
+            prompt = "".join(self.chunks + [chunk])
+            stop_triggered = False
+            for stop in self.stops:
+                matched = stop.search(prompt)
 
-                if leading > 0:
-                    chunk = chunk[:leading]
-                    with self._chunks_lock:
-                        self.chunks.append(chunk)
+                if matched:
+                    self.status = CompletionStatus.STOP_CONDITION
 
-                self.status = CompletionStatus.FINISHED
-                break
+                    start, end = matched.start(), matched.end()
 
-            if stop.match(prompt):
-                trailing = len(prompt) - stop.match(prompt).end()
+                    if self.include_stops:
+                        to_remove = len(prompt[end:])
+                    else:
+                        to_remove = len(prompt[start:])
 
-                for _ in range(trailing):
-                    self.chunks[-1] = self.chunks[-1][:-1]
-                    if self.chunks[-1] == "":
-                        self.chunks.pop(-1)
+                    while to_remove > 0:
+                        if new_chunk == "":
+                            if self.chunks and self.chunks[-1] == "":
+                                self.chunks.pop()
+                            if self.chunks:
+                                self.chunks[-1] = self.chunks[-1][:-1]
+                        else:
+                            new_chunk = new_chunk[:-1]
 
-                self.status = CompletionStatus.FINISHED
-                break
+                        to_remove -= 1
 
+                    stop_triggered = True
+                    break
 
-    # Future-like methods
+            # Append the (possibly trimmed) chunk
+            self.chunks.append(new_chunk)
+
+            # Notify any waiting replay streams
+            self._chunks_cv.notify_all()
+
+        # Maintain existing queue behavior for any legacy consumers
+        self.stream_q.put(new_chunk)
+        if stop_triggered:
+            self.stream_q.put(None)         # sentinel for queue consumers
+
     def add_done_callback(self, fn):
         with self._callback_lock:
-            if self._done_event.is_set():
-                fn(self)
-            else:
+            done = self._done_event.is_set()
+            if not done:
                 self._done_callbacks.append(fn)
+
+        if done:
+            fn()
 
     def set_result(self, result):
         self._result = result
         self._done_event.set()
+        with self._chunks_lock:
+            self._chunks_cv.notify_all()
         self._invoke_callbacks()
 
     def set_exception(self, exception):
         self._exception = exception
         self._done_event.set()
+        with self._chunks_lock:
+            self._chunks_cv.notify_all()
         self._invoke_callbacks()
 
+    def pause(self):
+        """Pause replaying to stream()/astream() consumers (does not pause generation)."""
+        self._paused = True
+        self._pause_event.clear()
+
+    def resume(self):
+        """Resume replaying to stream()/astream() consumers."""
+        self._paused = False
+        self._pause_event.set()
+
     def result(self, timeout=None):
+
+        if self.status == CompletionStatus.PENDING:
+            raise Exception(f"Completion.start() must be called before result is obtainable")
+
         if not self._done_event.wait(timeout):
             raise TimeoutError()
         if self._exception:
@@ -207,56 +371,66 @@ class Completion:
 
     def _invoke_callbacks(self):
         with self._callback_lock:
-            for fn in self._done_callbacks:
-                try:
-                    fn(self)
-                except Exception as e:
-                    raise e
-
+            callbacks = self._done_callbacks
             self._done_callbacks = []
+
+        for fn in callbacks:
+            try:
+                fn()
+            except Exception as e:
+                print(f"Exception in callback: {e}")
+                raise e
 
     def done(self):
         return self._done_event.is_set()
-
 
     def findall(self, pattern):
         self.result()
         return re.findall(pattern, "".join(self.chunks))
 
-    @property
-    def text(self):
-        text = super().result()
-        return text
+    def current_index(self) -> int:
+        """Return the current number of chunks accumulated (for resume points)."""
+        with self._chunks_lock:
+            return len(self.chunks)
+
+    def __await__(self):
+        async def wait_for_result():
+            while not self.done():
+                await asyncio.sleep(0.1)
+            return self.result()
+        return wait_for_result().__await__()
 
 
-    @property
-    def backticks(self):
-        pattern = r'`(.*?)`'
-        return self.findall(pattern)
+class TextCompletion(Completion):
+    """
+    Text-oriented completion wrapper for prompt-chain usage.
+    Converts text-like prompt state into a single user message.
+    """
 
+    def start(self):
+        self.status = CompletionStatus.INITIALIZING
+        if self.prompt is None:
+            raise ValueError("Prompt not set")
 
+        prompt = self.prompt
+        if isinstance(prompt, list):
+            if self in prompt:
+                prompt = prompt[:prompt.index(self)].copy()
 
-if __name__ == "__main__":
+            flattened = []
+            for p in prompt:
+                if isinstance(p, list):
+                    flattened.extend(p)
+                else:
+                    flattened.append(p)
+            prompt = flattened
 
+        if isinstance(prompt, list):
+            text_prompt = "".join([str(x) for x in prompt])
+        else:
+            text_prompt = str(prompt)
 
-    # messages
-    messages = [
-        {"role": "system", "content": "You speak in haikus"},
-        {"role": "user", "content": "What is loam?"}
-    ]
-    loam = completion(messages)
+        self.prompt = normalize_messages(text_prompt)
 
-
-    # strings
-    prompt = "Billy Joel said: Sing us a song you're "
-    lyric = completion(prompt, stop=[".", "!", "\n"])
-
-
-    # chunks
-    chunks = ["The capi", "tal of", " France ", "is", " "]
-    capitol = completion(chunks, stop=".")
-
-
-    print(loam.result())
-    print(lyric.result())
-    print(capitol.result())
+        self.status = CompletionStatus.RUNNING
+        asyncio.run_coroutine_threadsafe(self._run_generator(), self.completions_loop)

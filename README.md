@@ -8,6 +8,9 @@ Lloam is a minimal prompting library offering a clean way to write prompts and m
 - **Lloam prompts:** clean function syntax for inline prompts
 
 
+Lloam treats completions as first-class citizens in the programming model, with built-in concurrency and dependency management. Instead of forcing developers to explicitly handle the asynchronous nature of completions, lloam makes it feel natural within normal Python patterns.
+
+
 ## Usage
 
 ```
@@ -18,102 +21,106 @@ Overview: [completions](#lloam-completions), [prompts](#lloam-prompts), [agents]
 
 ### Lloam Completions
 
-`lloam.completion` is a simple and familiar way to generate completions. It returns a `Completion` object, which manages the token stream.  Tokens are accumulated concurrently, meaning completions won't block your program until you acess their results (e.g. with `str()` or `print()`).
+`lloam.completion` is a simple and familiar way to generate completions. It returns a `Completion` object which is essentially a wrapper around a token stream. Tokens are streamed concurrently, so the completion won't block your program, 
 
+
+**Concurrent:** When you create `Completion` objects, token streams are parallelized automatically and don't block until you call `.result()`
 ```python
-from lloam import completion
+import lloam
+
+answer_1 = lloam.completion("What's the meaning of life?")
+answer_2 = lloam.completion("How many minutes to hard boil an egg?")
+answer_3 = lloam.completion("Who is the piano man?")
+
+# all three completions run in the background
+print("The completions are running...")
+
+# .result() will pause until the completion finishes
+print(answer_2.result())
+print(answer_3.result())
+print(answer_1.result())
+
+```
 
 
-# strings
-prompt = "Snap, crackle, and"
-who = completion(prompt, stop="!", model="gpt-3.5-turbo")
-
-# lists
-chunks = ["The capi", "tal of", " France ", "is", "?"]
-capitol = completion(chunks, stop=[".", "!"])
-
+**Streaming:** You can iterate over tokens in a completion as they arrive
+```python
 messages = [
     {"role": "system", "content": "You answer questions in haikus"},
     {"role": "user", "content": "What's loam"}
 ]
-poem = completion(messages)
 
-# ...completions are running concurrently...
+poem = lloam.completion(messages)
 
-print(who)     # pop
-print(capitol) # The capital of France is Paris
-print(poem)    # Soil rich and robust,
-               # A blend of clay, sand, and silt,
-               # Perfect for planting.
+for tok in poem:
+    print(tok, end="")
+
+# Soil rich and robust,           
+# A blend of clay, sand, and silt,                       
+# Perfect for planting.                                  
 ```
 
+**Stopping conditions:** You can specify stopping conditions with strings and/or regexps
+```python
+
+# completion will terminate on,  and exclude either "." or "!"
+one_sentence = lloam.completion("Tell me about owls", stops=[".", "!"])
+
+# completion will terminate on closing code block
+numbers = lloam.completion(
+    "Please write some python, open code blocks with ```python",
+    regex_stops=[r"```\s+"],
+    include_stops=True
+)
+
+```
+
+
+
 ### Lloam Prompts
-Lloam prompts offer a clean templating syntax you can use to write more complex prompts inline. The language model fills the `[holes]`, while `{variables}` are substituted into the prompt. Lloam prompts run concurrently just like completions, under the hood they are managing a sequence of Completions.
+Lloam prompts offer a clean templating syntax for writing more complex prompts. `[holes]` are filled in my the language model, and `{variables}` are substituted into the prompt like f-strings. The resulting function returns a `Prompt` object, which is essentially a chain of `Completion` objects. You can access variables and holes as members of the returned `Prompt` object.
+
+- **Postitional and keyword args:** A prompt function supports both positional and keyword args.
+- **Hyperparameters:** You can set the model and temperature in the decorator
+- **Stopping conditions:** You can specify the stopping conditions of a hole using "up to" array notation and a regexp; `[hole:(rexexp)]` will terminate the completion when the regexp is matched
+
 
 ```python
 import lloam
 
-@lloam.prompt(model="gpt-3.5-turbo")
-def group_name(x, n=5):
+@lloam.prompt(model="gpt-3.5-turbo", temperature=0.9)
+def storytime(x, n=5):
     """
-    One kind of {x} is a [name].
+    One kind of {x} is a [[name].].
 
-    {n} {name}s makes a [group_name].
+    {n} {name}s makes a [[group].].
+
+    Here's a story about the {group},
+    and its {n} {name}s.
+
+    [[story]]
     """
 
+pets = storytime("domestic animal")
 
-animal = group_name("domestic animal")
-print("This prints immediately!")
+print(f"A story about a {pets.group.result()} of {pets.name.result()}s")
+# A story about a clowder of cats
 
-# access variables later
-print(animal.name)           # dog
-print(animal.group_name)     # pack
-```
-
-You can also inspect the live state of a prompt with `.inspect()`:
-
-```python
-musician_type = group_name("musician", n=3)
-
-import time
-for _ in range(3):
-    print(musician_type.inspect())
-    print("---")
-    time.sleep(0.5)
-
-print(musician_type.name)
-print(musician_type.group_name)
-
-# output:
-
-# One kind of musician is a [ ... ].
-
-# 3 [ ... ]s makes a [     ].
-# ---
-# One kind of musician is a singer-songwriter.
-
-# 3 singer-songwriters makes a [ ... ].
-# ---
-# One kind of musician is a singer-songwriter.
-
-# 3 singer-songwriters makes a trio.
-# ---
-# singer-songwriter
-# trio
+for tok in pets.story.stream()
+    print(tok, end="")
 ```
 
 ### Lloam Agents
-Lloam encourages you to think of an agent as a datastructure around language. Here's how you could make a RAG Agent that has 
-- a chat history
-- a database
-- a context for retrieved artifacts
+For a real example of a `lloam` agent, check out [Dixie](https://github.com/LachlanGray/dixie)!
 
-You can see another example in `examples/shell_agent.py`. More stuff on agents coming soon!
+Lloam conceptualizes an agent as a datastructure around language. The lloam agent is just a python class that can have langauge state and language methods. 
+
+Here's a sketch of a RAG agent that wraps an arbitrary database, and builds up context over a chat:
 
 ```python
 import lloam
 
-class RagAgent:
+class RagAgent(lloam.Agent):
     def __init__(self, db):
         self.db = db
         self.history = []
@@ -122,6 +129,7 @@ class RagAgent:
     def ask(self, question):
         self.history.append({"role": "user", "content": question})
 
+        # query
         results = self.db.query(question)
         self.artifacts.update(results)
 
@@ -131,7 +139,7 @@ class RagAgent:
 
         return {
             "answer": answer.answer
-            "followup": answer.followup
+            "citation": answer.citation
         }
 
 
@@ -144,9 +152,10 @@ class RagAgent:
 
         user: {question}
 
-        [answer]
+        [[answer]]
 
-        What would be a good followup question?
-        [followup]
+        Please provide sources from context
+
+        [[citation]]
         """
 ```
