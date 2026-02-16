@@ -5,7 +5,6 @@ from enum import Enum
 import asyncio
 
 from .completions import Completion, CompletionStatus
-from .spliterator import Spliterator
 
 def prompt(f=None, *, model="openai/gpt-4o-mini", temperature=0.7, start=True):
 
@@ -109,12 +108,7 @@ class Hole:
         self.parents: list           = []
         self.children: list          = []
 
-        self.has_spliterator         = False
-        self.split_start_pattern     = ""
-        self.split_end_pattern       = ""
-
         self.completion              = None
-        self.spliterator             = None
 
     def __str__(self):
         return self.completion.result()
@@ -176,11 +170,8 @@ def parse_prompt(text):
             elif len(stack) == 1:
                 # had outer condition
                 hole.start_pattern = buffer
-            elif len(stack) == 2:
-                hole.has_spliterator = True
-                hole.split_start_pattern = buffer
             else:
-                assert False, f"hole syntax error:\n{buffer}"
+                raise ValueError(f"nested hole syntax is not supported:\n{buffer}")
 
             buffer = ""
             stack.append("]")
@@ -226,10 +217,7 @@ def parse_prompt(text):
                     if hole.name is None:
                         hole.name = buffer
                     else:
-                        hole.split_end_pattern = buffer
-
-                elif len(stack) == 2:
-                    hole.name = buffer
+                        raise ValueError(f"nested hole syntax is not supported:\n{buffer}")
 
             elif ch == "}":
                 # define used variable
@@ -328,28 +316,6 @@ def compile_prompt(
 
                 segment.completion.add_stop(segment.end_pattern, regex=regex)
 
-            # create spliterator
-            if segment.has_spliterator:
-                segment.spliterator = Spliterator(segment.completion, allow_nesting=False)
-
-                if segment.split_start_pattern and segment.split_end_pattern:
-                    split_start = segment.split_start_pattern
-                    split_end = segment.split_end_pattern
-                    regex = False
-                    if split_start[0] == "r":
-                        regex = True
-                        split_start = split_start[1:]
-
-                    if split_end[0] == "r":
-                        regex = True
-                        split_end = split_end[1:]
-
-                    segment.spliterator.add_pair("capture", split_start, split_end, regex=regex)
-
-                else:
-                    assert False, f"spliterator requires start and end pattern for now"
-
-
             # add callback to parents (parent for now)
             for parent in segment.parents:
                 parent.completion.add_done_callback(segment.completion.start)
@@ -387,10 +353,7 @@ class Prompt:
         if name in self.prompt_holes:
 
             hole = self.prompt_holes[name]
-            if hole.has_spliterator:
-                return hole.spliterator
-            else:
-                return hole.completion
+            return hole.completion
 
         elif name in self.prompt_vars:
             var = self.prompt_vars[name]
@@ -453,8 +416,6 @@ if __name__ == "__main__":
 
     # mango_json = json.loads(str(template).strip())
     # print(mango_json)
-
-
 
 
 

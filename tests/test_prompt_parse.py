@@ -12,11 +12,7 @@ def test_parser():
 
     This is a variable referencing a {hole}
 
-    This was \[escaped\]
-
-    This is a pair spliterator [[inner[split_iterator]conditions]]
-
-    This is a pair spliterator [outer_and[inner[split_and_stop]conditions]end]
+    This was \\[escaped\\]
 
     """
 
@@ -37,16 +33,6 @@ def test_parser():
 
     assert "escaped" not in prompt_holes
 
-    assert prompt[9].name == "split_iterator"
-    assert prompt[9].split_start_pattern == "inner"
-    assert prompt[9].split_end_pattern == "conditions"
-
-    assert prompt[11].name == "split_and_stop"
-    assert prompt[11].start_pattern == "outer_and"
-    assert prompt[11].split_start_pattern == "inner"
-    assert prompt[11].split_end_pattern == "conditions"
-    assert prompt[11].end_pattern == "end"
-
 
 def test_compile():
     test_body = """
@@ -55,9 +41,9 @@ def test_compile():
 
     This is a {thing.thingy}
 
-    This is a pair spliterator [start[aaa[hole1]bbb]end]
+    This has stop condition [[hole1]end]
 
-    This is a pair spliterator [rstart[raaa[hole2]rbbb]rend]
+    This has regex stop [[hole2]r\\s*END]
 
     These were passed: {"|".join(listed)} then [[last_hole]].
 
@@ -79,17 +65,10 @@ def test_compile():
         args
     )
 
-    # normal
+    # normal stop
     assert prompt[5].completion.stops[0] == re.compile("end")
-    # TODO: uncomment when start conditions supported
-    # assert prompt[5].completion.starts[0] == re.compile("start")
-    assert prompt[5].spliterator.pairs["capture"] == (re.compile('aaa'), re.compile('bbb'))
-
-    # regexes
-    assert prompt[7].completion.stops[0] == re.compile("end")
-    # TODO: uncomment when start conditions supported
-    # assert prompt[5].completion.starts[0] == re.compile("start")
-    assert prompt[7].spliterator.pairs["capture"] == (re.compile('aaa'), re.compile('bbb'))
+    # regex stop
+    assert prompt[7].completion.stops[0] == re.compile("\\s*END")
 
     # member
     assert prompt_vars["thing.thingy"] == "thang"
@@ -106,4 +85,3 @@ def test_compile():
 
 if __name__ == "__main__":
     test_compile()
-
