@@ -7,8 +7,21 @@ def _load_openai_backend() -> Callable:
     return stream_openai_chat_completion
 
 
+def _load_anthropic_backend() -> Callable:
+    try:
+        from .anthropic import stream_chat_completion as stream_anthropic_chat_completion
+    except ImportError as e:
+        raise ImportError(
+            "Anthropic backend requires the 'anthropic' package. "
+            "Install it with `pip install anthropic`."
+        ) from e
+
+    return stream_anthropic_chat_completion
+
+
 _BACKEND_LOADERS = {
     "openai": _load_openai_backend,
+    "anthropic": _load_anthropic_backend,
 }
 
 
