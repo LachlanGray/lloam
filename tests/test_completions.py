@@ -356,7 +356,8 @@ def test_openai_backend_treats_string_prompt_as_user(monkeypatch):
 
     chunks = asyncio.run(run())
 
-    assert chunks == ["token"]
+    assert chunks[0] == {"type": "text_delta", "text": "token"}
+    assert chunks[-1]["type"] == "message_end"
     assert recorded["create_kwargs"]["messages"] == [
         {"role": "user", "content": "hello"}
     ]

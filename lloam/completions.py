@@ -7,6 +7,7 @@ import re
 from typing import Any, List, Optional, Dict, Union
 
 from .backends import get_backend
+from .events import normalize_backend_event
 from .messages import normalize_messages
 
 class CompletionStatus(Enum):
@@ -91,6 +92,7 @@ class Completion:
         self._async_gen_func, self._provider_model = get_backend(self.model)
 
         self.chunks = []
+        self.events = []
         self._chunks_lock = threading.Lock()
         self._chunks_cv = threading.Condition(self._chunks_lock)
         self._paused = False
@@ -241,7 +243,17 @@ class Completion:
             backend_params=self.backend_params,
         )
         try:
-            async for chunk in gen:
+            async for item in gen:
+                event = normalize_backend_event(item)
+                self.events.append(event)
+                event_type = event["type"]
+
+                if event_type != "text_delta":
+                    continue
+
+                chunk = event.get("text", "")
+                if not isinstance(chunk, str):
+                    chunk = str(chunk)
 
                 self._refresh_status(chunk)
 
