@@ -2,14 +2,30 @@ import json
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 
+def _normalize_content(value: Any) -> str | List[Dict[str, Any]]:
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, list):
+        normalized_blocks: List[Dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, dict):
+                normalized_blocks.append(item)
+            else:
+                normalized_blocks.append({"type": "text", "text": str(item)})
+        return normalized_blocks
+
+    return str(value)
+
+
 def _coerce_to_anthropic_messages(
     messages: List[Dict[str, Any]] | str,
-) -> tuple[List[Dict[str, Any]], Optional[str]]:
+) -> tuple[List[Dict[str, Any]], Optional[str | List[Dict[str, Any]]]]:
     if isinstance(messages, str):
         return [{"role": "user", "content": messages}], None
 
     anthropic_messages: List[Dict[str, Any]] = []
-    system_parts: List[str] = []
+    system_parts: List[str | List[Dict[str, Any]]] = []
 
     for msg in messages:
         if not isinstance(msg, dict):
@@ -17,10 +33,10 @@ def _coerce_to_anthropic_messages(
             continue
 
         role = str(msg.get("role", "user")).lower()
-        content = msg.get("content", "")
+        content = _normalize_content(msg.get("content", ""))
 
         if role in {"system", "developer"}:
-            system_parts.append(str(content))
+            system_parts.append(content)
             continue
 
         if role == "tool":
@@ -32,7 +48,20 @@ def _coerce_to_anthropic_messages(
 
         anthropic_messages.append({"role": role, "content": content})
 
-    system = "\n\n".join([part for part in system_parts if part != ""]) or None
+    if not system_parts:
+        system = None
+    elif all(isinstance(part, str) for part in system_parts):
+        system = "\n\n".join([part for part in system_parts if part != ""]) or None
+    else:
+        merged: List[Dict[str, Any]] = []
+        for part in system_parts:
+            if isinstance(part, str):
+                if part != "":
+                    merged.append({"type": "text", "text": part})
+            else:
+                merged.extend(part)
+        system = merged or None
+
     return anthropic_messages, system
 
 
@@ -83,7 +112,7 @@ async def _maybe_aclose(obj: Any) -> None:
 
 async def stream_chat_completion(
     messages: List[Dict[str, Any]],
-    model: str = "claude-3-5-sonnet-latest",
+    model: str = "claude-haiku-4-5-20251001",
     temperature: float = 0.9,
     stop: Optional[List[str]] = None,
     api_key: Optional[str] = None,
@@ -95,6 +124,7 @@ async def stream_chat_completion(
 
     client_kwargs = dict(params.get("client", {}))
     request_kwargs = dict(params.get("request", {}))
+    use_stream = bool(params.get("stream", True))
 
     if api_key is not None and "api_key" not in client_kwargs:
         client_kwargs["api_key"] = api_key
@@ -111,6 +141,14 @@ async def stream_chat_completion(
         if key in params and key not in client_kwargs:
             client_kwargs[key] = params[key]
 
+    # Prefer aiohttp transport when available unless caller provided a custom client.
+    if "http_client" not in client_kwargs:
+        try:
+            from anthropic import DefaultAioHttpClient
+            client_kwargs["http_client"] = DefaultAioHttpClient()
+        except Exception:
+            pass
+
     client = AsyncAnthropic(**client_kwargs)
 
     anthropic_messages, system = _coerce_to_anthropic_messages(messages)
@@ -123,19 +161,32 @@ async def stream_chat_completion(
         "messages": anthropic_messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "stop_sequences": stop_sequences,
-        "stream": True,
+        "stream": use_stream,
     }
+    if stop_sequences is not None:
+        call_kwargs["stop_sequences"] = stop_sequences
     if system is not None and "system" not in request_kwargs:
         call_kwargs["system"] = system
 
     call_kwargs.update(request_kwargs)
-    call_kwargs["stream"] = True
+    call_kwargs["stream"] = use_stream
 
     stream = None
     content_blocks: Dict[int, Dict[str, Any]] = {}
     finish_reason = None
     try:
+        if not use_stream:
+            response = await client.messages.create(**call_kwargs)
+            for block in getattr(response, "content", []) or []:
+                block_type = getattr(block, "type", None)
+                if block_type == "text":
+                    text = getattr(block, "text", None)
+                    if text:
+                        yield {"type": "text_delta", "text": text}
+            finish_reason = getattr(response, "stop_reason", None)
+            yield {"type": "message_end", "finish_reason": finish_reason}
+            return
+
         stream = await client.messages.create(**call_kwargs)
         async for event in stream:
             event_type = getattr(event, "type", None)
