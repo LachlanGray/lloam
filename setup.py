@@ -11,7 +11,7 @@ setup(
         "anthropic": ["anthropic>=0.40.0"],
     },
     author="Lachlan Gray",
-    description="A fertile collection of primitives for building things with LLMs",
+    description="A rich collection of primitives for building things with LLMs",
     long_description=open('README.md').read(),
     long_description_content_type="text/markdown",
     url="https://github.com/LachlanGray/lloam",
