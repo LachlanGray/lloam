@@ -18,8 +18,12 @@ def _coerce_to_anthropic_messages(
         role = str(msg.get("role", "user")).lower()
         content = msg.get("content", "")
 
-        if role == "system":
+        if role in {"system", "developer"}:
             system_parts.append(str(content))
+            continue
+
+        if role == "tool":
+            anthropic_messages.append({"role": "user", "content": content})
             continue
 
         if role not in {"user", "assistant"}:

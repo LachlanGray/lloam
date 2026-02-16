@@ -4,7 +4,7 @@ import re
 from enum import Enum
 import asyncio
 
-from .completions import Completion, CompletionStatus
+from .completions import Completion, CompletionStatus, TextCompletion
 
 def prompt(f=None, *, model="openai/gpt-4o-mini", temperature=0.7, start=True):
 
@@ -302,7 +302,7 @@ def compile_prompt(
 
         elif isinstance(segment, Hole):
 
-            segment.completion = Completion(cells[:], model=model, temperature=temperature)
+            segment.completion = TextCompletion(cells[:], model=model, temperature=temperature)
 
             if segment.start_pattern:
                 print("WARNING: start patterns not implemented yet! Completion will include preamble")
@@ -416,6 +416,5 @@ if __name__ == "__main__":
 
     # mango_json = json.loads(str(template).strip())
     # print(mango_json)
-
 
 

@@ -4,9 +4,10 @@ from queue import Queue
 from enum import Enum
 import re
 
-from typing import List, Optional, Dict, Union
+from typing import Any, List, Optional, Dict, Union
 
 from .backends import get_backend
+from .messages import normalize_messages
 
 class CompletionStatus(Enum):
     PENDING = 0
@@ -19,7 +20,7 @@ class CompletionStatus(Enum):
 
 
 def completion(
-    prompt: Union[str, List[str], List[Dict[str, str]]],
+    prompt: Union[str, Dict[str, Any], List[Dict[str, Any]]],
     model: str = "openai/gpt-4o-mini",
     stops: Optional[List[str]] = [],
     regex_stops: Optional[List[str]] = [],
@@ -29,7 +30,7 @@ def completion(
     """
     Generates a completion using a language model.
 
-    :param prompt: A string, openai-style chat list, or list of strings
+    :param prompt: A string, message dict, or chat message list
     :param model: Model slug in the format "<backend>/<model>", e.g. "openai/gpt-4o-mini"
     :param stops: A list of strings that will terminate the completion early
     :param regex_stops: A list of rexexp strings that will terminate the completion early
@@ -125,49 +126,16 @@ class Completion:
         if self.prompt is None:
             raise ValueError("Prompt not set")
 
-        # A completion can exist in its own prompt (there's a reason). 
-        # In that case, use proceeding prompts to generate the completion
-        if isinstance(self.prompt, list):
-            if self in self.prompt:
-                self.prompt = self.prompt[:self.prompt.index(self)].copy()
-
-            any_dicts = any(isinstance(p, dict) for p in self.prompt)
-            any_lists = any(isinstance(p, list) for p in self.prompt)
-            # all_dicts = all(isinstance(p, dict) for p in self.prompt)
-            # are_messages = all("role" in p for p in self.prompt if isinstance(p, dict))
-
-
-            if any_lists:
-                # unpack any list in prompt
-                new_prompt = []
-                for p in self.prompt:
-                    if isinstance(p, list):
-                        new_prompt.extend(p)
-                    else:
-                        new_prompt.append(p)
-
-                self.prompt = new_prompt
-
-
-            # if prompt is mixture of oai messages and strings, strings are cast to user messages
-            if any_dicts:
-                new_prompt = []
-                for p in self.prompt:
-                    if isinstance(p, dict):
-                        if "role" in p:
-                            new_prompt.append(p)
-                        else:
-                            new_prompt.append("\n".join([f"{k}: {v}" for k, v in p.items()]))
-                    else:
-                        new_prompt.append({
-                            "role": "user",
-                            "content": str(p)
-                        })
-
-                self.prompt = new_prompt
-
-            else:
-                self.prompt = "".join([str(x) for x in self.prompt])
+        if isinstance(self.prompt, dict):
+            self.prompt = normalize_messages([self.prompt])
+        elif isinstance(self.prompt, str):
+            self.prompt = normalize_messages(self.prompt)
+        elif isinstance(self.prompt, list):
+            self.prompt = normalize_messages(self.prompt)
+        else:
+            raise TypeError(
+                "Completion prompt must be a string, message dict, or list of message dicts"
+            )
 
         self.status = CompletionStatus.RUNNING
         asyncio.run_coroutine_threadsafe(self._run_generator(), self.completions_loop)
@@ -419,3 +387,38 @@ class Completion:
                 await asyncio.sleep(0.1)
             return self.result()
         return wait_for_result().__await__()
+
+
+class TextCompletion(Completion):
+    """
+    Text-oriented completion wrapper for prompt-chain usage.
+    Converts text-like prompt state into a single user message.
+    """
+
+    def start(self):
+        self.status = CompletionStatus.INITIALIZING
+        if self.prompt is None:
+            raise ValueError("Prompt not set")
+
+        prompt = self.prompt
+        if isinstance(prompt, list):
+            if self in prompt:
+                prompt = prompt[:prompt.index(self)].copy()
+
+            flattened = []
+            for p in prompt:
+                if isinstance(p, list):
+                    flattened.extend(p)
+                else:
+                    flattened.append(p)
+            prompt = flattened
+
+        if isinstance(prompt, list):
+            text_prompt = "".join([str(x) for x in prompt])
+        else:
+            text_prompt = str(prompt)
+
+        self.prompt = normalize_messages(text_prompt)
+
+        self.status = CompletionStatus.RUNNING
+        asyncio.run_coroutine_threadsafe(self._run_generator(), self.completions_loop)

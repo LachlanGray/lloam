@@ -248,7 +248,7 @@ def test_astream_replay_and_from_index(code_sample):
     asyncio.run(run())
 
 
-def test_completion_normalizes_mixed_message_prompts():
+def test_completion_rejects_mixed_message_prompts():
     captured = {}
 
     async def generator(messages, *args, **kwargs):
@@ -262,14 +262,49 @@ def test_completion_normalizes_mixed_message_prompts():
     ]
     compl = Completion(prompt)
     compl._async_gen_func = generator
+    with pytest.raises(ValueError):
+        compl.start()
+
+
+def test_completion_accepts_standard_message_list():
+    captured = {}
+
+    async def generator(messages, *args, **kwargs):
+        captured["messages"] = messages
+        yield "ok"
+
+    prompt = [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "Hello there"},
+        {"role": "assistant", "content": "Hi"},
+    ]
+    compl = Completion(prompt)
+    compl._async_gen_func = generator
     compl.start()
 
     assert compl.result() == "ok"
-    assert captured["messages"] == [
-        {"role": "system", "content": "rules"},
-        {"role": "user", "content": "Hello there"},
-        "foo: bar",
-    ]
+    assert captured["messages"] == prompt
+
+
+def test_completion_normalizes_string_prompt_to_user_message():
+    captured = {}
+
+    async def generator(messages, *args, **kwargs):
+        captured["messages"] = messages
+        yield "ok"
+
+    compl = Completion("hello")
+    compl._async_gen_func = generator
+    compl.start()
+
+    assert compl.result() == "ok"
+    assert captured["messages"] == [{"role": "user", "content": "hello"}]
+
+
+def test_completion_rejects_legacy_list_prompt():
+    compl = Completion(["hello", " world"])
+    with pytest.raises(ValueError):
+        compl.start()
 
 
 def test_openai_backend_treats_string_prompt_as_user(monkeypatch):
