@@ -7,7 +7,7 @@ import asyncio
 from .completions import Completion, CompletionStatus
 from .spliterator import Spliterator
 
-def prompt(f=None, *, model="gpt-4o-mini", temperature=0.7, start=True):
+def prompt(f=None, *, model="openai/gpt-4o-mini", temperature=0.7, start=True):
 
     if f is None:
         # kwargs were given; decorator evaluates to decorator with no args
@@ -270,7 +270,7 @@ def parse_prompt(text):
 def compile_prompt(
         prompt_segments, prompt_holes, prompt_vars,
         args, 
-        model="gpt-4o-mini",
+        model="openai/gpt-4o-mini",
         temperature=0.7
 ):
 
@@ -314,7 +314,7 @@ def compile_prompt(
 
         elif isinstance(segment, Hole):
 
-            segment.completion = Completion(cells[:], temperature=temperature)
+            segment.completion = Completion(cells[:], model=model, temperature=temperature)
 
             if segment.start_pattern:
                 print("WARNING: start patterns not implemented yet! Completion will include preamble")
@@ -363,7 +363,7 @@ def compile_prompt(
 
 
 class Prompt:
-    def __init__(self, f, args, model="gpt-4o-mini", temperature=0.7, start=False):
+    def __init__(self, f, args, model="openai/gpt-4o-mini", temperature=0.7, start=False):
         self.prompt_src = preprocess(f)
         self.args = args
         self.prompt, self.prompt_holes, self.prompt_vars = parse_prompt(self.prompt_src)
@@ -453,7 +453,6 @@ if __name__ == "__main__":
 
     # mango_json = json.loads(str(template).strip())
     # print(mango_json)
-
 
 
 

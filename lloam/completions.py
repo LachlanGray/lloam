@@ -6,7 +6,7 @@ import re
 
 from typing import List, Optional, Dict, Union
 
-from .streaming import stream_chat_completion
+from .backends import get_backend
 
 class CompletionStatus(Enum):
     PENDING = 0
@@ -20,16 +20,17 @@ class CompletionStatus(Enum):
 
 def completion(
     prompt: Union[str, List[str], List[Dict[str, str]]],
-    model: str = "gpt-4o-mini",
+    model: str = "openai/gpt-4o-mini",
     stops: Optional[List[str]] = [],
     regex_stops: Optional[List[str]] = [],
-    include_stops: bool = False
+    include_stops: bool = False,
+    backend_params: Optional[Dict] = None,
 ):
     """
     Generates a completion using a language model.
 
     :param prompt: A string, openai-style chat list, or list of strings
-    :param model: Which model to use (only openai models supported; changing soon)
+    :param model: Model slug in the format "<backend>/<model>", e.g. "openai/gpt-4o-mini"
     :param stops: A list of strings that will terminate the completion early
     :param regex_stops: A list of rexexp strings that will terminate the completion early
     :param include_stops: Whether characters that trigger a stopping condition should go in the final result
@@ -37,7 +38,12 @@ def completion(
     :return: A Completion object
     """
 
-    completion = Completion(prompt, stops)
+    completion = Completion(
+        prompt,
+        include_stops=include_stops,
+        model=model,
+        backend_params=backend_params,
+    )
 
     for stop in stops:
         completion.add_stop(stop)
@@ -61,14 +67,16 @@ class Completion:
             self,
             prompt,
             include_stops=False,
-            model="gpt-4o-mini",
-            temperature=0.7
+            model="openai/gpt-4o-mini",
+            temperature=0.7,
+            backend_params: Optional[Dict] = None,
     ):
         super().__init__()
         self.prompt = prompt
         self.status = CompletionStatus.PENDING
         self.model = model
         self.temperature = temperature
+        self.backend_params = backend_params or {}
 
         self._done_callbacks = []
         self._exception = None
@@ -79,8 +87,7 @@ class Completion:
         self.stops = []
         self.include_stops = include_stops
 
-        # TODO: determine from model argument
-        self._async_gen_func = stream_chat_completion
+        self._async_gen_func, self._provider_model = get_backend(self.model)
 
         self.chunks = []
         self._chunks_lock = threading.Lock()
@@ -258,7 +265,10 @@ class Completion:
 
     async def _run_generator(self):
         gen = self._async_gen_func(
-            self.prompt, model=self.model, temperature=self.temperature
+            self.prompt,
+            model=self._provider_model,
+            temperature=self.temperature,
+            backend_params=self.backend_params,
         )
         try:
             async for chunk in gen:
