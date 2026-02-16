@@ -8,7 +8,9 @@ from lloam.completions import Completion
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 from lloam.completions import CompletionStatus
+from lloam.backends import openai as openai_backend
 
 failure_msg = lambda original, expected, actual: f"Original ----------\n{original}\n\nExpected ----------\n{expected}\n\nGot ----------\n{actual}"
 
@@ -244,3 +246,82 @@ def test_astream_replay_and_from_index(code_sample):
         assert "".join(out2) == expected_rest, failure_msg(expected_rest, expected_rest, "".join(out2))
 
     asyncio.run(run())
+
+
+def test_completion_normalizes_mixed_message_prompts():
+    captured = {}
+
+    async def generator(messages, *args, **kwargs):
+        captured["messages"] = messages
+        yield "ok"
+
+    prompt = [
+        {"role": "system", "content": "rules"},
+        "Hello there",
+        {"foo": "bar"},
+    ]
+    compl = Completion(prompt)
+    compl._async_gen_func = generator
+    compl.start()
+
+    assert compl.result() == "ok"
+    assert captured["messages"] == [
+        {"role": "system", "content": "rules"},
+        {"role": "user", "content": "Hello there"},
+        "foo: bar",
+    ]
+
+
+def test_openai_backend_treats_string_prompt_as_user(monkeypatch):
+    recorded = {}
+
+    class FakeStream:
+        def __init__(self):
+            self._done = False
+            self.closed = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._done:
+                raise StopAsyncIteration
+            self._done = True
+            return SimpleNamespace(
+                choices=[SimpleNamespace(delta=SimpleNamespace(content="token"))]
+            )
+
+        async def close(self):
+            self.closed = True
+
+    class FakeCompletions:
+        def __init__(self):
+            self.stream = FakeStream()
+
+        async def create(self, **kwargs):
+            recorded["create_kwargs"] = kwargs
+            return self.stream
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            recorded["client_kwargs"] = kwargs
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+            self.closed = False
+
+        async def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(openai_backend, "AsyncOpenAI", FakeClient)
+
+    async def run():
+        chunks = []
+        async for chunk in openai_backend.stream_chat_completion("hello"):
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(run())
+
+    assert chunks == ["token"]
+    assert recorded["create_kwargs"]["messages"] == [
+        {"role": "user", "content": "hello"}
+    ]

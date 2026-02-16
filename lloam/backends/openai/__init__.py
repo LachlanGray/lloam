@@ -35,7 +35,7 @@ async def stream_chat_completion(
     client = AsyncOpenAI(**client_kwargs)
 
     if isinstance(messages, str):
-        messages = [{"role": "assistant", "content": messages}]
+        messages = [{"role": "user", "content": messages}]
 
     call_kwargs = {
         "model": model,

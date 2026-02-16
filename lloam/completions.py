@@ -164,6 +164,8 @@ class Completion:
                             "content": str(p)
                         })
 
+                self.prompt = new_prompt
+
             else:
                 self.prompt = "".join([str(x) for x in self.prompt])
 
